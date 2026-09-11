@@ -225,7 +225,7 @@ function bindAuth() {
   const go = async () => {
     const btn = $("#a_go"); btn.disabled = true; msg("");
     try { const body = state.authMode === "register" ? { action: "register", email: $("#a_email").value, name: $("#a_name").value, password: $("#a_pw").value } : { action: "login", email: $("#a_email").value, password: $("#a_pw").value };
-      const r = await api(null, body); state.user = r.user; store.set("pickem_user", r.user); renderWho(); msg(`Welcome, ${esc(r.user.name)}.`, "ok"); render(); }
+      const r = await api(null, body); state.user = r.user; store.set("pickem_user", r.user); renderWho(); render(); setTimeout(() => msg(`Welcome, ${esc(r.user.name)}. Loading this week's games…`, "ok"), 0); }
     catch (e) { msg(esc(e.message), "err"); btn.disabled = false; }
   };
   $("#a_go").addEventListener("click", go); view.querySelectorAll("#a_email,#a_pw,#a_name").forEach(i => i.addEventListener("keydown", e => e.key === "Enter" && go()));
@@ -247,9 +247,10 @@ function gameRow(g, o) {
 }
 
 /* ---------- picks ---------- */
-async function renderPicks() {
+async function renderPicks(seq = renderSeq) {
   msg(""); if (!state.user) { view.innerHTML = authPanel(); bindAuth(); return; }
-  loading(); try { await loadWeek(); } catch (e) { return view.innerHTML = `<div class="notice err">Couldn't reach the pool (${esc(e.message)}).</div>`; }
+  loading(); try { await loadWeek(); } catch (e) { if (stale(seq)) return; return view.innerHTML = `<div class="notice err">Couldn't reach the pool (${esc(e.message)}).</div>`; }
+  if (stale(seq)) return;
   if (!state.user) { view.innerHTML = authPanel(); bindAuth(); return; }
   const games = state.data.games || []; if (!games.length) return view.innerHTML = `<div class="ticket"><h2>Week ${state.week}</h2><p class="muted">The commissioner hasn't posted this week's games yet.</p></div>`;
   const tbg = tiebreakGame(games); const mine = state.data.mine;
@@ -276,27 +277,30 @@ async function renderPicks() {
     const warn = [missing ? `${missing} game${missing > 1 ? "s" : ""} left unpicked` : "", noPred ? "no Monday night score prediction" : ""].filter(Boolean).join(" and ");
     if (!confirm(`Submit your final Week ${state.week} picks?${warn ? `\n\nHeads up: ${warn}.` : ""}\n\nThis cannot be changed afterwards.`)) return;
     const btn = $("#submit"); btn.disabled = true; btn.textContent = "Submitting…";
-    try { await api(null, { action: "submitPicks", token: state.user.token, week: state.week, picks, awayPred: state.awayPred, homePred: state.homePred }); state.picks = {}; state.awayPred = state.homePred = ""; msg(`<b>Locked in.</b> Your Week ${state.week} picks are recorded.`, "ok"); renderPicks(); }
+    try { await api(null, { action: "submitPicks", token: state.user.token, week: state.week, picks, awayPred: state.awayPred, homePred: state.homePred }); state.picks = {}; state.awayPred = state.homePred = ""; msg(`<b>Locked in.</b> Your Week ${state.week} picks are recorded.`, "ok"); renderPicks(++renderSeq); }
     catch (e) { msg(`Submit failed: ${esc(e.message)}`, "err"); btn.disabled = false; btn.textContent = "Submit final picks"; }
   });
 }
 
 /* ---------- results ---------- */
-async function renderResults() {
-  loading(); msg(""); try { await loadWeek(true); } catch (e) { return view.innerHTML = `<div class="notice err">Couldn't load results (${esc(e.message)}).</div>`; }
+async function renderResults(seq = renderSeq, fresh = false) {
+  loading(); msg(""); try { await loadWeek(fresh); } catch (e) { if (stale(seq)) return; return view.innerHTML = `<div class="notice err">Couldn't load results (${esc(e.message)}).</div>`; }
+  if (stale(seq)) return;
   const games = state.data.games || [], wk = state.data.week, done = games.filter(g => g.result).length, tbg = tiebreakGame(games);
   if (!games.length) return view.innerHTML = `<div class="ticket"><h2>Week ${state.week}</h2><p class="muted">No games posted for this week.</p></div>`;
   const champ = wk.complete && wk.winners.length ? `<div class="champ"><div><div class="t">Week ${state.week} winner: ${esc(wk.winners.map(w => w.name).join(" & "))}</div><div class="s">${wk.winners[0].correct} of ${games.length} correct${wk.tiebreakUsed ? ` · won on the Monday night prediction (actual total ${state.data.mnfActual})` : ""}${state.data.emailedAt ? " · results emailed" : ""}</div></div></div>` : "";
   const gmap = Object.fromEntries(games.map(g => [g.id, g]));
   const grid = r => `<div class="grid">${r.cells.map(c => { const g = gmap[c.id]; const lab = c.pick === "hidden" ? "?" : c.pick || "–"; const cls = c.r === "w" ? "w" : c.r === "l" ? "l" : c.pick === "hidden" ? "h" : "p"; return `<span class="cell ${cls}" title="${esc(g ? g.teams.away.name + " @ " + g.teams.home.name : "")}">${esc(lab)}</span>`; }).join("")}</div>`;
-  view.innerHTML = `<div class="ticket"><h2>Week ${state.week} results</h2><p class="muted" style="margin:0">${done} of ${games.length} games scored · ${wk.rows.length} submission${wk.rows.length === 1 ? "" : "s"} of ${state.data.playerCount} players${state.data.mnfActual != null ? ` · Monday night total ${state.data.mnfActual}` : ""}. Others' picks show as ? until kickoff.</p>${champ}
+  view.innerHTML = `<div class="ticket"><div class="row" style="justify-content:space-between;align-items:center;margin:0"><h2>Week ${state.week} results</h2><button class="btn sm ghost" id="refreshRes">Refresh</button></div><p class="muted" style="margin:0">${done} of ${games.length} games scored · ${wk.rows.length} submission${wk.rows.length === 1 ? "" : "s"} of ${state.data.playerCount} players${state.data.mnfActual != null ? ` · Monday night total ${state.data.mnfActual}` : ""}. Others' picks show as ? until kickoff.</p>${champ}
     ${wk.rows.length ? `<div class="scroll"><table><thead><tr><th class="rank">#</th><th>Player</th><th class="num">Correct</th><th class="num">Wrong</th><th>MNF prediction</th><th class="num">Off by</th><th>Picks</th></tr></thead><tbody>${wk.rows.map(r => `<tr class="${wk.complete && r.rank === 1 ? "first" : ""}"><td class="rank">${r.rank}</td><td>${esc(r.name)}</td><td class="num"><b>${r.correct}</b></td><td class="num">${r.wrong}</td><td>${r.tb == null ? "–" : r.tb === "hidden" || r.awayPred == null ? "hidden until kickoff" : `${esc(tbg.away)} ${r.awayPred} – ${esc(tbg.home)} ${r.homePred} (${r.tb})`}</td><td class="num">${r.tbDiff ?? "–"}</td><td>${grid(r)}</td></tr>`).join("")}</tbody></table></div>` : `<p class="muted">No submissions yet.</p>`}</div>
     <div class="ticket"><h2>Scoreboard</h2><ul class="games">${games.map(g => gameRow(g, { interactive: false, showResult: true, isTb: g.id === tbg.id })).join("")}</ul></div>`;
+  $("#refreshRes").addEventListener("click", () => renderResults(++renderSeq, true));
 }
 
 /* ---------- standings ---------- */
-async function renderStandings() {
-  loading(); msg(""); let s; try { s = (await api({ action: "standings" })).standings; } catch (e) { return view.innerHTML = `<div class="notice err">Couldn't load standings (${esc(e.message)}).</div>`; }
+async function renderStandings(seq = renderSeq) {
+  loading(); msg(""); let s; try { s = (await api({ action: "standings" })).standings; } catch (e) { if (stale(seq)) return; return view.innerHTML = `<div class="notice err">Couldn't load standings (${esc(e.message)}).</div>`; }
+  if (stale(seq)) return;
   const weeks = s.weeks.map(w => w.week);
   const podium = ["1st", "2nd", "3rd"].map((lab, i) => { const h = s.rows.filter(r => r.rank === i + 1); const who = h.length === 1 ? h[0].name : h.length > 1 ? `Tie: ${h.map(x => x.name).join(", ")}` : "—"; return `<div class="prize ${i === 0 ? "p1" : ""}"><div class="a">$${s.prizes[i].toLocaleString()}</div><div class="n">${lab} · ${esc(who)}</div></div>`; }).join("");
   view.innerHTML = `<div class="ticket"><h2>${state.season} season standings</h2><p class="muted" style="margin:0">$${s.pool.toLocaleString()} pool · ${s.playerCount} players (${s.paidCount} paid). Ranked by total correct picks; ties broken by weekly wins.</p><div class="prizes">${podium}</div>
@@ -305,8 +309,9 @@ async function renderStandings() {
 }
 
 /* ---------- commissioner ---------- */
-async function renderAdmin() {
-  loading(); msg(""); try { await loadWeek(true); } catch (e) { return view.innerHTML = `<div class="notice err">Couldn't reach the backend (${esc(e.message)}).</div>`; }
+async function renderAdmin(seq = renderSeq) {
+  loading(); msg(""); try { await loadWeek(true); } catch (e) { if (stale(seq)) return; return view.innerHTML = `<div class="notice err">Couldn't reach the backend (${esc(e.message)}).</div>`; }
+  if (stale(seq)) return;
   const published = state.data.games || [], st = state.data.settings || {}; const tbg = tiebreakGame(published);
   const pin = () => { state.pin = $("#pin").value; if (!state.pin) { msg("Enter the commissioner PIN first.", "err"); return null; } return state.pin; };
   const run = async (btn, body, okText, after) => { const p = pin(); if (!p) return; btn.disabled = true; try { const r = await api(null, { pin: p, ...body }); msg(okText(r), "ok"); after && await after(r); } catch (e) { msg(esc(e.message), "err"); } btn.disabled = false; };
@@ -345,7 +350,7 @@ async function renderAdmin() {
     $("#selAll").addEventListener("click", () => { list.forEach(g => g.sel = true); drawSlate(); }); $("#selNone").addEventListener("click", () => { state.slate.forEach(g => g.sel = false); drawSlate(); });
     $("#publish").addEventListener("click", e => { const sel = state.slate.filter(g => g.sel); if (!sel.length) return msg("Select at least one game.", "err"); if (sel.some(g => g.homeLine == null) && !confirm("Some selected games have no spread yet. Publish anyway? (Players would be picking straight up on those.)")) return;
       const removed = published.filter(g => !sel.some(s => s.id === g.id)).length; if (removed && !confirm(`This removes ${removed} already-published game${removed > 1 ? "s" : ""} from Week ${state.week}. Continue?`)) return;
-      run(e.target, { action: "publishSlate", week: state.week, games: sel.map(({ sel, final, statusText, ...g }) => g) }, () => `Week ${state.week} slate published (${sel.length} games).`, () => { state.slate = null; renderAdmin(); }); });
+      run(e.target, { action: "publishSlate", week: state.week, games: sel.map(({ sel, final, statusText, ...g }) => g) }, () => `Week ${state.week} slate published (${sel.length} games).`, () => { state.slate = null; renderAdmin(++renderSeq); }); });
   };
   $("#loadSlate").addEventListener("click", async e => { e.target.disabled = true; msg(""); try { const evs = await fetchWeekEvents(state.week); const pubIds = new Set(published.map(g => g.id)); state.slate = evs.map(g => ({ ...g, sel: pubIds.has(g.id) })); if (!evs.length) msg("ESPN returned no games for this week — is the week number right?", "err"); } catch (err) { msg(`Couldn't load from ESPN: ${esc(err.message)}`, "err"); } e.target.disabled = false; drawSlate(); });
   $("#hideThu").addEventListener("change", e => { state.hideThu = e.target.checked; drawSlate(); });
@@ -371,7 +376,8 @@ async function renderAdmin() {
 }
 
 /* ---------- boot ---------- */
-function render() { renderChrome(); ({ picks: renderPicks, results: renderResults, standings: renderStandings, admin: renderAdmin })[state.tab](); }
+let renderSeq = 0; const stale = seq => seq !== renderSeq;   // ignore responses for a tab the user already left
+function render() { renderChrome(); const seq = ++renderSeq; ({ picks: renderPicks, results: renderResults, standings: renderStandings, admin: renderAdmin })[state.tab](seq); }
 document.querySelectorAll("nav.tabs button").forEach(b => b.addEventListener("click", () => { state.tab = b.dataset.tab; state.slate = null; render(); }));
 $("#weekSel").addEventListener("change", e => { state.week = Number(e.target.value); state.picks = {}; state.slate = null; render(); });
 $("#prevWk").addEventListener("click", () => { if (state.week > 1) { state.week--; state.picks = {}; state.slate = null; render(); } });
