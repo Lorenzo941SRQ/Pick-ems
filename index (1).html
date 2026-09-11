@@ -1,0 +1,373 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Football Pick'em Pool</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;800&family=Barlow:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{--field:#123B2A;--field-deep:#0C2A1E;--chalk:#F3F0E6;--chalk-2:#E6E1D2;--ink:#1B1B1B;--ink-soft:#5A5A52;--gold:#E8B443;--gold-ink:#3E2E05;--win:#2F8F5B;--loss:#B8412F;--push:#8A8A80;--line:#CFC9B7;--r:6px}
+  *{box-sizing:border-box}
+  html,body{margin:0;color:var(--ink);font-family:'Barlow',system-ui,sans-serif;font-size:16px;line-height:1.45}
+  body{background:repeating-linear-gradient(90deg,transparent 0 calc(10% - 1px),rgba(255,255,255,.06) calc(10% - 1px) 10%),var(--field)}
+  button{font:inherit;cursor:pointer}
+  header{padding:26px 20px 14px;color:var(--chalk);max-width:1000px;margin:0 auto}
+  .brand{display:flex;align-items:baseline;justify-content:space-between;flex-wrap:wrap;gap:8px 20px}
+  .brand h1{font-family:'Barlow Condensed';font-weight:800;font-size:clamp(38px,7vw,60px);line-height:.9;margin:0}
+  .brand h1 small{display:block;font-weight:600;font-size:.42em;color:var(--gold);margin-top:6px}
+  .who{display:flex;align-items:center;gap:10px;font-family:'Barlow Condensed';font-size:18px;font-weight:600}
+  .who button{background:none;border:1.5px solid rgba(243,240,230,.5);color:var(--chalk);border-radius:var(--r);padding:4px 10px;font-family:'Barlow Condensed';font-weight:600;font-size:16px}
+  .weeknav{display:flex;align-items:center;gap:8px}
+  .weeknav button,.weeknav select{font-family:'Barlow Condensed';font-weight:600;font-size:20px;background:transparent;color:var(--chalk);border:1.5px solid rgba(243,240,230,.5);border-radius:var(--r);height:36px}
+  .weeknav button{width:36px;font-size:22px;line-height:1}.weeknav select{padding:4px 10px}.weeknav select option{color:var(--ink)}
+  .weeknav button:hover{border-color:var(--gold);color:var(--gold)}
+  nav.tabs{display:flex;gap:4px;margin-top:20px;border-bottom:2px solid rgba(243,240,230,.25);flex-wrap:wrap}
+  nav.tabs button{font-family:'Barlow Condensed';font-weight:600;font-size:20px;background:none;border:0;color:rgba(243,240,230,.65);padding:8px 14px;border-bottom:3px solid transparent;margin-bottom:-2px}
+  nav.tabs button[aria-selected="true"]{color:var(--gold);border-bottom-color:var(--gold)}
+  main{max-width:1000px;margin:0 auto;padding:0 20px 60px}
+  .ticket{background:var(--chalk);border-radius:var(--r);padding:18px 20px;margin-top:16px;box-shadow:0 2px 0 rgba(0,0,0,.25)}
+  .ticket h2{font-family:'Barlow Condensed';font-weight:800;font-size:28px;margin:0 0 4px}
+  .ticket h3{font-family:'Barlow Condensed';font-weight:600;font-size:22px;margin:18px 0 6px}
+  .muted{color:var(--ink-soft)}.small{font-size:14px}
+  .notice{background:var(--chalk-2);border-left:4px solid var(--gold);padding:10px 14px;border-radius:var(--r);margin-top:16px}
+  .notice.err{border-left-color:var(--loss)}.notice.ok{border-left-color:var(--win)}
+  .notice code{background:rgba(0,0,0,.07);padding:1px 5px;border-radius:3px}
+  .row{display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;margin-top:10px}
+  label.f{display:flex;flex-direction:column;gap:4px;font-weight:500;flex:1 1 200px}
+  label.chk{display:flex;gap:8px;align-items:center;font-weight:500}
+  input,select,textarea{font:inherit;font-size:17px;padding:9px 12px;border:1.5px solid var(--line);border-radius:var(--r);background:#fff;color:var(--ink)}
+  input[type=checkbox]{width:20px;height:20px;padding:0}
+  input:focus-visible,button:focus-visible,select:focus-visible{outline:3px solid var(--gold);outline-offset:2px}
+  .games{list-style:none;margin:16px 0 0;padding:0}
+  .game{display:grid;grid-template-columns:1fr auto 1fr;grid-template-areas:"away meta home" "line line line";gap:6px 10px;padding:14px 0;border-top:1px dashed var(--line)}
+  .game:first-child{border-top:0}
+  .game.tbg{background:rgba(232,180,67,.12);border-radius:var(--r);padding:14px 10px;margin-top:6px;border-top:0}
+  .team{display:flex;align-items:center;gap:10px;background:#fff;border:1.5px solid var(--line);border-radius:var(--r);padding:8px 10px;text-align:left;color:var(--ink);min-height:64px;width:100%;transition:background .12s,border-color .12s}
+  .team.home{grid-area:home;flex-direction:row-reverse;text-align:right}.team.away{grid-area:away}
+  .team img,.team .mono{width:42px;height:42px;flex:none;object-fit:contain}
+  .team .mono{border-radius:50%;background:var(--field);color:var(--chalk);display:inline-flex;align-items:center;justify-content:center;font-family:'Barlow Condensed';font-weight:800;font-size:15px}
+  .team .tn{font-family:'Barlow Condensed';font-weight:800;font-size:21px;line-height:1;display:block}
+  .team .tn sup{font-size:12px;color:var(--ink-soft);font-weight:600;margin-right:3px}
+  .team .tl{font-size:14px;color:var(--ink-soft);display:block;margin-top:3px;font-weight:600}
+  .team:hover:not(:disabled){border-color:var(--gold)}
+  .team.picked{background:var(--gold);border-color:var(--gold);color:var(--gold-ink)}.team.picked .tl,.team.picked .tn sup{color:var(--gold-ink)}
+  .team:disabled{cursor:default}
+  .team.covered{box-shadow:inset 0 0 0 2px var(--win)}.team.failed{opacity:.5}
+  .meta{grid-area:meta;display:flex;flex-direction:column;align-items:center;justify-content:center;font-family:'Barlow Condensed';font-weight:600;color:var(--ink-soft);font-size:14px;min-width:74px;text-align:center;line-height:1.25}
+  .meta .at{font-size:18px;color:var(--ink)}
+  .meta .lg{font-size:12px;background:var(--chalk-2);padding:1px 6px;border-radius:3px;margin-bottom:3px}
+  .meta .score{font-size:22px;font-weight:800;color:var(--ink)}
+  .line{grid-area:line;display:flex;gap:14px;flex-wrap:wrap;font-size:14px;color:var(--ink-soft);justify-content:center}
+  .line b{color:var(--ink);font-weight:600}
+  .tie{margin-top:18px;padding-top:16px;border-top:2px solid var(--line)}
+  .pred{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:8px}
+  .pred label{display:flex;flex-direction:column;gap:3px;font-weight:600;font-family:'Barlow Condensed';font-size:16px}
+  .pred input{width:90px;font-size:22px;text-align:center;font-family:'Barlow Condensed';font-weight:800}
+  .pred .tot{font-family:'Barlow Condensed';font-weight:800;font-size:22px;padding-top:18px}
+  .actions{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-top:18px}
+  .btn{font-family:'Barlow Condensed';font-weight:800;font-size:22px;background:var(--field);color:var(--chalk);border:0;border-radius:var(--r);padding:10px 22px}
+  .btn:hover{background:var(--field-deep)}.btn:disabled{opacity:.55;cursor:wait}
+  .btn.ghost{background:transparent;color:var(--field);border:1.5px solid var(--field);font-weight:600;font-size:18px}
+  .btn.sm{font-size:16px;padding:6px 12px;font-weight:600}.btn.danger{color:var(--loss);border-color:var(--loss)}
+  .count{font-family:'Barlow Condensed';font-size:20px;font-weight:600;color:var(--ink-soft)}
+  table{width:100%;border-collapse:collapse;margin-top:12px;font-size:15px}
+  th,td{padding:8px;text-align:left;border-bottom:1px solid var(--line);vertical-align:middle}
+  th{font-family:'Barlow Condensed';font-weight:600;font-size:17px;color:var(--ink-soft)}
+  td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
+  tr.first td{background:rgba(232,180,67,.25)}
+  .rank{font-family:'Barlow Condensed';font-weight:800;font-size:22px;width:44px}
+  .grid{display:flex;gap:3px;flex-wrap:wrap}
+  .cell{width:30px;height:26px;border-radius:3px;display:inline-flex;align-items:center;justify-content:center;font-size:11px;font-weight:600;color:#fff;background:var(--push)}
+  .cell.w{background:var(--win)}.cell.l{background:var(--loss)}.cell.p,.cell.h{background:#d9d4c4;color:var(--ink-soft)}
+  .scroll{overflow-x:auto}
+  .champ{display:flex;align-items:center;gap:14px;background:var(--gold);color:var(--gold-ink);border-radius:var(--r);padding:14px 18px;margin-top:14px}
+  .champ .t{font-family:'Barlow Condensed';font-weight:800;font-size:32px;line-height:1}.champ .s{font-size:15px}
+  .resbtns{display:flex;gap:6px;grid-area:line;justify-content:center;flex-wrap:wrap}
+  .resbtns button{font-family:'Barlow Condensed';font-weight:600;font-size:16px;border:1.5px solid var(--line);background:#fff;border-radius:var(--r);padding:5px 12px;color:var(--ink)}
+  .resbtns button.on{background:var(--field);color:var(--chalk);border-color:var(--field)}
+  .prizes{display:flex;gap:10px;flex-wrap:wrap;margin-top:12px}
+  .prize{flex:1 1 160px;background:#fff;border:1.5px solid var(--line);border-radius:var(--r);padding:12px 14px}
+  .prize .a{font-family:'Barlow Condensed';font-weight:800;font-size:30px;line-height:1}.prize .n{font-size:15px;margin-top:4px}
+  .prize.p1{border-color:var(--gold);background:rgba(232,180,67,.2)}
+  .slate{list-style:none;margin:12px 0 0;padding:0}
+  .slate li{display:grid;grid-template-columns:28px 1fr;gap:10px;align-items:center;padding:8px 0;border-top:1px dashed var(--line)}
+  .slate .m{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .slate img{width:28px;height:28px;object-fit:contain}
+  .slate .tm{font-family:'Barlow Condensed';font-weight:800;font-size:19px}
+  .slate .tm sup{font-size:11px;color:var(--ink-soft);margin-right:2px}
+  .slate .k{color:var(--ink-soft);font-size:14px;margin-left:auto}
+  .slate li.off{opacity:.45}
+  .authbox{max-width:460px}
+  .segs{display:flex;gap:4px;margin-top:8px}
+  .segs button{flex:1;font-family:'Barlow Condensed';font-weight:600;font-size:18px;background:#fff;border:1.5px solid var(--line);border-radius:var(--r);padding:6px}
+  .segs button.on{background:var(--field);color:var(--chalk);border-color:var(--field)}
+  footer{max-width:1000px;margin:0 auto;padding:0 20px 40px;color:rgba(243,240,230,.6);font-size:13px}
+  .skeleton{height:14px;background:var(--chalk-2);border-radius:3px;margin:10px 0;animation:pulse 1.2s infinite}
+  @keyframes pulse{50%{opacity:.5}}
+  @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+  @media (max-width:560px){.game{grid-template-columns:1fr;grid-template-areas:"meta" "away" "home" "line"}.team.home{flex-direction:row;text-align:left}main,header,footer{padding-left:12px;padding-right:12px}.ticket{padding:14px}}
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">
+    <h1 id="poolName">Football Pick'em Pool<small id="seasonLabel"></small></h1>
+    <div class="who" id="who"></div>
+  </div>
+  <div class="row" style="justify-content:space-between;align-items:center">
+    <nav class="tabs" role="tablist" style="margin-top:10px;flex:1">
+      <button role="tab" data-tab="picks" aria-selected="true">Make picks</button>
+      <button role="tab" data-tab="results" aria-selected="false">Weekly results</button>
+      <button role="tab" data-tab="standings" aria-selected="false">Season standings</button>
+      <button role="tab" data-tab="admin" aria-selected="false">Commissioner</button>
+    </nav>
+    <div class="weeknav"><button id="prevWk" aria-label="Previous week">‹</button><select id="weekSel" aria-label="Week"></select><button id="nextWk" aria-label="Next week">›</button></div>
+  </div>
+</header>
+<main>
+  <div id="setupNotice" class="notice err" hidden><b>Not connected yet.</b> Paste your Google Apps Script URL into <code>API_URL</code> at the top of the script in this file (see README). Until then nothing can be saved.</div>
+  <div id="msg" class="notice" hidden></div>
+  <section id="view"></section>
+</main>
+<footer>Picks are scored against the spread posted when the slate was published; a push earns no point. Submissions are final. Weekly ties go to the closest Monday night score prediction (combined total). Season ties are broken by weekly wins. Schedule, lines, scores and logos via ESPN.</footer>
+
+<script>
+/* ================================ CONFIG ================================ */
+const API_URL = "";          // Google Apps Script web app URL, ends in /exec
+const SEASON = "2026";
+const MAX_WEEKS = 18;
+/* ======================================================================== */
+
+const ESPN = "https://site.api.espn.com/apis/site/v2/sports/football";
+const state = { season: SEASON, week: 1, tab: "picks", user: null, data: null, picks: {}, awayPred: "", homePred: "", pin: "", authMode: "login", slate: null, hideThu: true, weeksWithGames: [] };
+const $ = s => document.querySelector(s); const view = $("#view");
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const fmtKick = d => new Date(d).toLocaleString(undefined, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+const started = g => new Date(g.kickoff) <= new Date();
+const tiebreakGame = games => games.length ? games[games.length - 1] : null;
+function msg(text, kind) { const el = $("#msg"); if (!text) { el.hidden = true; return; } el.className = "notice " + (kind || ""); el.innerHTML = text; el.hidden = false; }
+function loading() { view.innerHTML = `<div class="ticket"><div class="skeleton" style="width:40%"></div><div class="skeleton"></div><div class="skeleton" style="width:80%"></div></div>`; }
+const store = { get(k) { try { return JSON.parse(localStorage.getItem(k)); } catch { return null; } }, set(k, v) { try { v == null ? localStorage.removeItem(k) : localStorage.setItem(k, JSON.stringify(v)); } catch { } } };
+function lineText(g, side) { if (g.homeLine == null) return g.spread || ""; const n = Math.abs(g.homeLine); if (n === 0) return "PK"; const homeFav = g.homeLine < 0; return (side === "home") === homeFav ? `-${n}` : `+${n}`; }
+const mono = abbr => `<span class="mono">${esc(String(abbr || "?").slice(0, 3))}</span>`;
+const tImg = t => t.logo ? `<img src="${esc(t.logo)}" alt="" loading="lazy">` : mono(t.abbr);
+
+/* ---------- backend ---------- */
+async function api(params, body) {
+  if (!API_URL) throw new Error("API_URL isn't set in index.html yet");
+  let r;
+  if (body) r = await fetch(API_URL, { method: "POST", redirect: "follow", body: JSON.stringify({ season: state.season, ...body }) });
+  else { const u = new URL(API_URL); Object.entries({ season: state.season, ...params }).forEach(([k, v]) => v != null && v !== "" && u.searchParams.set(k, v)); r = await fetch(u, { redirect: "follow" }); }
+  const j = await r.json(); if (!j.ok) throw new Error(j.error || "Backend error"); return j;
+}
+async function loadWeek() { state.data = await api({ action: "state", week: state.week, token: state.user?.token }); state.weeksWithGames = state.data.weeksWithGames || []; if (state.user && !state.data.me) { logout(false); } else if (state.data.me) { state.user = { ...state.user, ...state.data.me }; store.set("pickem_user", state.user); } }
+
+/* ---------- ESPN slate + scores ---------- */
+function parseEvent(ev, league) {
+  const c = ev.competitions?.[0] || {}; const comps = c.competitors || [];
+  const H = comps.find(x => x.homeAway === "home") || comps[0] || {}, A = comps.find(x => x.homeAway === "away") || comps[1] || {};
+  const team = t => ({ abbr: t.team?.abbreviation || "", name: t.team?.shortDisplayName || t.team?.displayName || "", full: t.team?.displayName || "", logo: t.team?.logo || t.team?.logos?.[0]?.href || "", rank: t.curatedRank?.current && t.curatedRank.current <= 25 ? t.curatedRank.current : null, record: (t.records || []).find(r => r.type === "total")?.summary || "", score: t.score != null && t.score !== "" ? Number(t.score) : null });
+  const home = team(H), away = team(A); const o = (c.odds || [])[0] || {};
+  let details = o.details || "", homeLine = null;
+  const m = /^([A-Z&.]+)\s*([+-]?\d+(?:\.\d+)?)$/i.exec(details.trim());
+  if (m) { const n = parseFloat(m[2]); homeLine = m[1].toUpperCase() === home.abbr.toUpperCase() ? n : -n; }
+  else if (/EVEN|PK/i.test(details)) homeLine = 0;
+  else if (typeof o.spread === "number") { homeLine = o.spread; details = homeLine === 0 ? "PK" : (homeLine < 0 ? `${home.abbr} ${homeLine}` : `${away.abbr} ${-homeLine}`); }
+  const st = ev.status?.type || {};
+  return { id: String(ev.id), league, away: away.abbr, home: home.abbr, spread: details, homeLine, kickoff: ev.date, teams: { away, home }, final: !!st.completed, statusText: st.shortDetail || "", tv: (c.broadcasts || [])[0]?.names?.[0] || "" };
+}
+const ymd = d => new Date(d).toISOString().slice(0, 10).replace(/-/g, "");
+async function fetchWeekEvents(week) {
+  const nfl = await (await fetch(`${ESPN}/nfl/scoreboard?seasontype=2&week=${week}&dates=${state.season}`)).json();
+  const nflGames = (nfl.events || []).map(e => parseEvent(e, "NFL"));
+  let cfbGames = [];
+  if (nflGames.length) {
+    const ds = nflGames.map(g => new Date(g.kickoff).getTime()); const lo = new Date(Math.min(...ds) - 36e5 * 36), hi = new Date(Math.max(...ds) + 36e5 * 12);
+    try { const cfb = await (await fetch(`${ESPN}/college-football/scoreboard?groups=80&limit=400&dates=${ymd(lo)}-${ymd(hi)}`)).json(); cfbGames = (cfb.events || []).map(e => parseEvent(e, "NCAA")).filter(g => (g.teams.away.rank || g.teams.home.rank) && new Date(g.kickoff) >= lo && new Date(g.kickoff) <= hi); } catch (e) { }
+  }
+  return [...nflGames, ...cfbGames].sort((a, b) => new Date(a.kickoff) - new Date(b.kickoff));
+}
+function atsResult(g, live) { // live = parsed ESPN event with scores
+  if (!live?.final || live.teams.home.score == null || live.teams.away.score == null || g.homeLine == null) return null;
+  const d = live.teams.home.score + g.homeLine - live.teams.away.score; return d > 0 ? g.home : d < 0 ? g.away : "PUSH";
+}
+
+/* ---------- auth ---------- */
+function logout(rerender = true) { state.user = null; store.set("pickem_user", null); renderWho(); if (rerender) render(); }
+function renderWho() { $("#who").innerHTML = state.user ? `<span>${esc(state.user.name)}</span><button id="logoutBtn">Log out</button>` : ""; $("#logoutBtn")?.addEventListener("click", () => logout()); }
+function authPanel() {
+  const reg = state.authMode === "register";
+  return `<div class="ticket authbox"><h2>${reg ? "Create your login" : "Log in"}</h2><p class="muted" style="margin:0">${reg ? "Your email is your login; your profile name is what shows on the leaderboard." : "Use the email and password you signed up with."}</p>
+    <div class="segs"><button class="${reg ? "" : "on"}" data-m="login">Log in</button><button class="${reg ? "on" : ""}" data-m="register">Create login</button></div>
+    <div class="row"><label class="f">Email<input type="email" id="a_email" autocomplete="email"></label></div>
+    ${reg ? `<div class="row"><label class="f">Profile name<input type="text" id="a_name" maxlength="30" autocomplete="nickname" placeholder="e.g. Big Lou"></label></div>` : ""}
+    <div class="row"><label class="f">Password<input type="password" id="a_pw" autocomplete="${reg ? "new-password" : "current-password"}"></label></div>
+    <div class="actions"><button class="btn" id="a_go">${reg ? "Create login" : "Log in"}</button>${reg ? "" : `<span class="muted small">Forgot it? Ask the commissioner to reset it.</span>`}</div></div>`;
+}
+function bindAuth() {
+  view.querySelectorAll(".segs button").forEach(b => b.addEventListener("click", () => { state.authMode = b.dataset.m; render(); }));
+  const go = async () => {
+    const btn = $("#a_go"); btn.disabled = true; msg("");
+    try { const body = state.authMode === "register" ? { action: "register", email: $("#a_email").value, name: $("#a_name").value, password: $("#a_pw").value } : { action: "login", email: $("#a_email").value, password: $("#a_pw").value };
+      const r = await api(null, body); state.user = r.user; store.set("pickem_user", r.user); renderWho(); msg(`Welcome, ${esc(r.user.name)}.`, "ok"); render(); }
+    catch (e) { msg(esc(e.message), "err"); btn.disabled = false; }
+  };
+  $("#a_go").addEventListener("click", go); view.querySelectorAll("#a_email,#a_pw,#a_name").forEach(i => i.addEventListener("keydown", e => e.key === "Enter" && go()));
+}
+
+/* ---------- chrome ---------- */
+function renderChrome() {
+  document.querySelectorAll("nav.tabs button").forEach(b => b.setAttribute("aria-selected", b.dataset.tab === state.tab));
+  const sel = $("#weekSel"); sel.innerHTML = ""; for (let w = 1; w <= MAX_WEEKS; w++) { const o = document.createElement("option"); o.value = w; o.textContent = `Week ${w}` + (state.weeksWithGames.includes(w) ? "" : " ·"); sel.appendChild(o); } sel.value = state.week;
+  $("#seasonLabel").textContent = `${state.season} season`; if (state.data?.settings?.poolName) $("#poolName").firstChild.textContent = state.data.settings.poolName; renderWho();
+}
+function gameRow(g, o) {
+  const lock = started(g);
+  const btn = (side) => { const t = g.teams[side], abbr = g[side]; const cls = ["team", side, o.pick === abbr ? "picked" : "", o.showResult && g.result ? (g.result === abbr ? "covered" : g.result === "PUSH" ? "" : "failed") : ""].join(" ");
+    return `<button class="${cls}" data-g="${esc(g.id)}" data-t="${esc(abbr)}" ${o.interactive && !lock ? "" : "disabled"} aria-pressed="${o.pick === abbr}">${tImg(t)}<span><span class="tn">${t.rank ? `<sup>#${t.rank}</sup>` : ""}${esc(t.name)}</span><span class="tl">${esc(lineText(g, side))}${t.record ? ` · ${esc(t.record)}` : ""}</span></span></button>`; };
+  const meta = `<span class="lg">${esc(g.league)}</span><span class="at">@</span><span>${esc(fmtKick(g.kickoff))}</span>${g.tv ? `<span>${esc(g.tv)}</span>` : ""}`;
+  const bits = [`Spread <b>${esc(g.spread || "—")}</b>`]; if (o.showResult && g.result) bits.push(`<b>${g.result === "PUSH" ? "Push" : esc(g.result) + " covered"}</b>`); if (o.interactive && lock) bits.push(`<span class="muted">Locked</span>`); if (o.isTb) bits.push(`<b>Monday night tiebreaker game</b>`);
+  return `<li class="game ${o.isTb ? "tbg" : ""}">${btn("away")}<div class="meta">${meta}</div>${btn("home")}<div class="line">${bits.join(" ")}</div></li>`;
+}
+
+/* ---------- picks ---------- */
+async function renderPicks() {
+  msg(""); if (!state.user) { view.innerHTML = authPanel(); bindAuth(); return; }
+  loading(); try { await loadWeek(); } catch (e) { return view.innerHTML = `<div class="notice err">Couldn't reach the pool (${esc(e.message)}).</div>`; }
+  if (!state.user) { view.innerHTML = authPanel(); bindAuth(); return; }
+  const games = state.data.games || []; if (!games.length) return view.innerHTML = `<div class="ticket"><h2>Week ${state.week}</h2><p class="muted">The commissioner hasn't posted this week's games yet.</p></div>`;
+  const tbg = tiebreakGame(games); const mine = state.data.mine;
+  if (mine) {
+    view.innerHTML = `<div class="ticket"><h2>Week ${state.week} — your submission</h2><div class="notice ok" style="margin-top:8px"><b>Locked in.</b> Submitted ${esc(new Date(mine.ts).toLocaleString())}. Submissions are final and can't be changed.</div>
+      <ul class="games">${games.map(g => gameRow(g, { pick: mine.picks[g.id], interactive: false, showResult: true, isTb: g.id === tbg.id })).join("")}</ul>
+      <div class="tie"><b>Monday night prediction:</b> ${mine.tb == null ? "none" : `${esc(tbg.teams.away.name)} ${mine.awayPred} – ${esc(tbg.teams.home.name)} ${mine.homePred} (total ${mine.tb})`}${state.data.mnfActual != null ? ` · actual total ${state.data.mnfActual}` : ""}</div></div>`;
+    return;
+  }
+  const open = games.filter(g => !started(g)).length;
+  view.innerHTML = `<div class="ticket"><h2>Week ${state.week} picks</h2><p class="muted" style="margin:0">${games.length} games · ${open} still open. Tap the side you think covers the spread. <b>You get one submission per week and it can't be changed</b>, so check it before you hit the button.</p>
+    <ul class="games">${games.map(g => gameRow(g, { pick: state.picks[g.id], interactive: true, isTb: g.id === tbg.id })).join("")}</ul>
+    <div class="tie"><b>Monday night score prediction</b> — ${esc(tbg.teams.away.name)} @ ${esc(tbg.teams.home.name)}, ${esc(fmtKick(tbg.kickoff))}. The combined total breaks weekly ties.
+      <div class="pred"><label>${esc(tbg.teams.away.name)}<input type="number" id="ap" min="0" max="99" inputmode="numeric" value="${esc(state.awayPred)}" ${started(tbg) ? "disabled" : ""}></label><label>${esc(tbg.teams.home.name)}<input type="number" id="hp" min="0" max="99" inputmode="numeric" value="${esc(state.homePred)}" ${started(tbg) ? "disabled" : ""}></label><span class="tot" id="tot"></span></div></div>
+    <div class="actions"><button class="btn" id="submit">Submit final picks</button><span class="count" id="count"></span></div></div>`;
+  const upd = () => { const openG = games.filter(g => !started(g)); const n = openG.filter(g => state.picks[g.id]).length; $("#count").textContent = `${n} of ${openG.length} open games picked`; const a = $("#ap").value, h = $("#hp").value; $("#tot").textContent = a !== "" && h !== "" ? `Total ${Number(a) + Number(h)}` : ""; };
+  upd();
+  view.querySelectorAll(".team:not(:disabled)").forEach(b => b.addEventListener("click", () => { state.picks[b.dataset.g] = b.dataset.t; view.querySelectorAll(`.team[data-g="${CSS.escape(b.dataset.g)}"]`).forEach(x => { const on = x.dataset.t === b.dataset.t; x.classList.toggle("picked", on); x.setAttribute("aria-pressed", on); }); upd(); }));
+  $("#ap").addEventListener("input", e => { state.awayPred = e.target.value; upd(); }); $("#hp").addEventListener("input", e => { state.homePred = e.target.value; upd(); });
+  $("#submit").addEventListener("click", async () => {
+    const openG = games.filter(g => !started(g)); const picks = {}; openG.forEach(g => { if (state.picks[g.id]) picks[g.id] = state.picks[g.id]; });
+    if (!Object.keys(picks).length) return msg("Pick at least one game that hasn't started.", "err");
+    const missing = openG.length - Object.keys(picks).length; const noPred = !started(tbg) && (state.awayPred === "" || state.homePred === "");
+    const warn = [missing ? `${missing} game${missing > 1 ? "s" : ""} left unpicked` : "", noPred ? "no Monday night score prediction" : ""].filter(Boolean).join(" and ");
+    if (!confirm(`Submit your final Week ${state.week} picks?${warn ? `\n\nHeads up: ${warn}.` : ""}\n\nThis cannot be changed afterwards.`)) return;
+    const btn = $("#submit"); btn.disabled = true; btn.textContent = "Submitting…";
+    try { await api(null, { action: "submitPicks", token: state.user.token, week: state.week, picks, awayPred: state.awayPred, homePred: state.homePred }); state.picks = {}; state.awayPred = state.homePred = ""; msg(`<b>Locked in.</b> Your Week ${state.week} picks are recorded.`, "ok"); renderPicks(); }
+    catch (e) { msg(`Submit failed: ${esc(e.message)}`, "err"); btn.disabled = false; btn.textContent = "Submit final picks"; }
+  });
+}
+
+/* ---------- results ---------- */
+async function renderResults() {
+  loading(); msg(""); try { await loadWeek(); } catch (e) { return view.innerHTML = `<div class="notice err">Couldn't load results (${esc(e.message)}).</div>`; }
+  const games = state.data.games || [], wk = state.data.week, done = games.filter(g => g.result).length, tbg = tiebreakGame(games);
+  if (!games.length) return view.innerHTML = `<div class="ticket"><h2>Week ${state.week}</h2><p class="muted">No games posted for this week.</p></div>`;
+  const champ = wk.complete && wk.winners.length ? `<div class="champ"><div><div class="t">Week ${state.week} winner: ${esc(wk.winners.map(w => w.name).join(" & "))}</div><div class="s">${wk.winners[0].correct} of ${games.length} correct${wk.tiebreakUsed ? ` · won on the Monday night prediction (actual total ${state.data.mnfActual})` : ""}${state.data.emailedAt ? " · results emailed" : ""}</div></div></div>` : "";
+  const gmap = Object.fromEntries(games.map(g => [g.id, g]));
+  const grid = r => `<div class="grid">${r.cells.map(c => { const g = gmap[c.id]; const lab = c.pick === "hidden" ? "?" : c.pick || "–"; const cls = c.r === "w" ? "w" : c.r === "l" ? "l" : c.pick === "hidden" ? "h" : "p"; return `<span class="cell ${cls}" title="${esc(g ? g.teams.away.name + " @ " + g.teams.home.name : "")}">${esc(lab)}</span>`; }).join("")}</div>`;
+  view.innerHTML = `<div class="ticket"><h2>Week ${state.week} results</h2><p class="muted" style="margin:0">${done} of ${games.length} games scored · ${wk.rows.length} submission${wk.rows.length === 1 ? "" : "s"} of ${state.data.playerCount} players${state.data.mnfActual != null ? ` · Monday night total ${state.data.mnfActual}` : ""}. Others' picks show as ? until kickoff.</p>${champ}
+    ${wk.rows.length ? `<div class="scroll"><table><thead><tr><th class="rank">#</th><th>Player</th><th class="num">Correct</th><th class="num">Wrong</th><th>MNF prediction</th><th class="num">Off by</th><th>Picks</th></tr></thead><tbody>${wk.rows.map(r => `<tr class="${wk.complete && r.rank === 1 ? "first" : ""}"><td class="rank">${r.rank}</td><td>${esc(r.name)}</td><td class="num"><b>${r.correct}</b></td><td class="num">${r.wrong}</td><td>${r.tb == null ? "–" : started(tbg) ? `${esc(tbg.away)} ${r.awayPred} – ${esc(tbg.home)} ${r.homePred} (${r.tb})` : "hidden"}</td><td class="num">${r.tbDiff ?? "–"}</td><td>${grid(r)}</td></tr>`).join("")}</tbody></table></div>` : `<p class="muted">No submissions yet.</p>`}</div>
+    <div class="ticket"><h2>Scoreboard</h2><ul class="games">${games.map(g => gameRow(g, { interactive: false, showResult: true, isTb: g.id === tbg.id })).join("")}</ul></div>`;
+}
+
+/* ---------- standings ---------- */
+async function renderStandings() {
+  loading(); msg(""); let s; try { s = (await api({ action: "standings" })).standings; } catch (e) { return view.innerHTML = `<div class="notice err">Couldn't load standings (${esc(e.message)}).</div>`; }
+  const weeks = s.weeks.map(w => w.week);
+  const podium = ["1st", "2nd", "3rd"].map((lab, i) => { const h = s.rows.filter(r => r.rank === i + 1); const who = h.length === 1 ? h[0].name : h.length > 1 ? `Tie: ${h.map(x => x.name).join(", ")}` : "—"; return `<div class="prize ${i === 0 ? "p1" : ""}"><div class="a">$${s.prizes[i].toLocaleString()}</div><div class="n">${lab} · ${esc(who)}</div></div>`; }).join("");
+  view.innerHTML = `<div class="ticket"><h2>${state.season} season standings</h2><p class="muted" style="margin:0">$${s.pool.toLocaleString()} pool · ${s.playerCount} players (${s.paidCount} paid). Ranked by total correct picks; ties broken by weekly wins.</p><div class="prizes">${podium}</div>
+    ${s.rows.length ? `<div class="scroll"><table><thead><tr><th class="rank">#</th><th>Player</th><th class="num">Correct</th><th class="num">Wrong</th><th class="num">Weekly wins</th><th class="num">Prize</th>${weeks.map(w => `<th class="num">W${w}</th>`).join("")}</tr></thead><tbody>${s.rows.map(r => `<tr class="${r.rank === 1 ? "first" : ""}"><td class="rank">${r.rank}</td><td>${esc(r.name)}${r.paid ? "" : ` <span class="muted small">(unpaid)</span>`}</td><td class="num"><b>${r.correct}</b></td><td class="num">${r.wrong}</td><td class="num">${r.wins}</td><td class="num">${r.prize ? "$" + r.prize.toLocaleString() : ""}</td>${weeks.map(w => `<td class="num">${r.byWeek[w] ?? "–"}</td>`).join("")}</tr>`).join("")}</tbody></table></div>` : `<p class="muted">Nobody's registered yet.</p>`}
+    ${s.weeks.length ? `<h3>Weekly winners</h3><table><tbody>${s.weeks.map(w => `<tr><td>Week ${w.week}</td><td>${w.complete ? `${esc(w.winners.join(" & "))} <span class="muted small">(${w.top} of ${w.games})</span>` : "<span class='muted'>in progress</span>"}</td></tr>`).join("")}</tbody></table>` : ""}</div>`;
+}
+
+/* ---------- commissioner ---------- */
+async function renderAdmin() {
+  loading(); msg(""); try { await loadWeek(); } catch (e) { return view.innerHTML = `<div class="notice err">Couldn't reach the backend (${esc(e.message)}).</div>`; }
+  const published = state.data.games || [], st = state.data.settings || {}; const tbg = tiebreakGame(published);
+  const pin = () => { state.pin = $("#pin").value; if (!state.pin) { msg("Enter the commissioner PIN first.", "err"); return null; } return state.pin; };
+  const run = async (btn, body, okText, after) => { const p = pin(); if (!p) return; btn.disabled = true; try { const r = await api(null, { pin: p, ...body }); msg(okText(r), "ok"); after && await after(r); } catch (e) { msg(esc(e.message), "err"); } btn.disabled = false; };
+  const resRow = g => `<li class="game ${g.id === tbg?.id ? "tbg" : ""}"><button class="team away" disabled>${tImg(g.teams.away)}<span><span class="tn">${esc(g.teams.away.name)}</span><span class="tl">${esc(lineText(g, "away"))}</span></span></button><div class="meta"><span class="lg">${esc(g.league)}</span><span class="score" data-score="${esc(g.id)}"></span><span>${esc(fmtKick(g.kickoff))}</span></div><button class="team home" disabled>${tImg(g.teams.home)}<span><span class="tn">${esc(g.teams.home.name)}</span><span class="tl">${esc(lineText(g, "home"))}</span></span></button>
+    <div class="resbtns" data-g="${esc(g.id)}"><button data-r="${esc(g.away)}" class="${g.result === g.away ? "on" : ""}">${esc(g.away)} covered</button><button data-r="PUSH" class="${g.result === "PUSH" ? "on" : ""}">Push</button><button data-r="${esc(g.home)}" class="${g.result === g.home ? "on" : ""}">${esc(g.home)} covered</button><button data-r="" class="${!g.result ? "on" : ""}">Not played</button></div></li>`;
+  view.innerHTML = `
+    <div class="ticket"><h2>Commissioner</h2><div class="row"><label class="f" style="max-width:240px">PIN<input type="password" id="pin" value="${esc(state.pin)}" autocomplete="off"></label><span class="muted small">Starts as 4321 — change it in Pool settings.</span></div></div>
+
+    <div class="ticket"><h2>1 · Build the Week ${state.week} slate</h2><p class="muted" style="margin:0">Loads every NFL game plus every game involving an AP Top 25 college team for this week, with the current spread and logos. Tick the games you want in the pool, then publish. The spread is frozen at publish time. The latest kickoff becomes the Monday night tiebreaker game.</p>
+      <div class="actions"><button class="btn ghost" id="loadSlate">Load games from ESPN</button><label class="chk"><input type="checkbox" id="hideThu" ${state.hideThu ? "checked" : ""}> Hide Thursday games</label><span class="muted small">${published.length ? `${published.length} games currently published` : "Nothing published yet for this week"}</span></div>
+      <div id="slateBox"></div></div>
+
+    <div class="ticket"><h2>2 · Score Week ${state.week}</h2><p class="muted" style="margin:0">After the games, click auto-score to pull final scores from ESPN and work out who covered; fix anything by hand, enter the Monday night total if it didn't fill, then save.</p>
+      ${published.length ? `<div class="actions"><button class="btn ghost" id="autoScore">Auto-score from ESPN</button></div><ul class="games">${published.map(resRow).join("")}</ul>` : `<p class="muted">Publish a slate first.</p>`}
+      <div class="tie"><label class="f" style="max-width:320px">Monday night actual combined score<input type="number" id="mnf" min="0" max="150" value="${state.data.mnfActual ?? ""}"></label></div>
+      <div class="actions"><button class="btn" id="saveRes">Save results</button><button class="btn ghost" id="previewEmail">Preview email</button><button class="btn ghost" id="sendEmail">Email weekly results</button><span class="muted">${state.data.emailedAt ? "Emailed " + esc(new Date(state.data.emailedAt).toLocaleString()) : "Not emailed yet"}</span></div><div id="emailPreview"></div></div>
+
+    <div class="ticket"><h2>3 · Players</h2><p class="muted" style="margin:0">Everyone who has created a login. Mark entry fees paid, reset a forgotten password, or remove someone.</p>
+      <div class="actions"><button class="btn sm" id="loadPlayers">Load players</button></div><div id="playersBox"></div></div>
+
+    <div class="ticket"><h2>4 · Pool settings</h2>
+      <div class="row"><label class="f">Pool name<input id="s_poolName" value="${esc(st.poolName || "")}"></label><label class="f">Entry fee ($)<input id="s_entryFee" type="number" value="${esc(st.entryFee || "")}"></label><label class="f">2nd prize ($)<input id="s_prize2" type="number" value="${esc(st.prize2 || "")}"></label><label class="f">3rd prize ($)<input id="s_prize3" type="number" value="${esc(st.prize3 || "")}"></label></div>
+      <div class="row"><label class="f">Commissioner email (results go To: you, players Bcc'd)<input id="s_commissionerEmail" value="${esc(st.commissionerEmail || "")}"></label><label class="f">Link to this page (added to emails)<input id="s_appUrl" value="${esc(st.appUrl || location.href.split("?")[0])}"></label><label class="f">New PIN (blank = keep)<input id="s_pin" type="password" autocomplete="off"></label></div>
+      <p class="muted small" style="margin:6px 0 0">1st prize = entry fee × registered players − 2nd − 3rd.</p>
+      <div class="actions"><button class="btn sm" id="saveSettings">Save settings</button></div></div>`;
+
+  // --- slate builder
+  const drawSlate = () => {
+    const box = $("#slateBox"); if (!state.slate) { box.innerHTML = ""; return; }
+    const pubIds = new Set(published.map(g => g.id)); const list = state.slate.filter(g => !(state.hideThu && new Date(g.kickoff).getDay() === 4));
+    if (!list.length) { box.innerHTML = `<p class="muted">No games found for this week yet.</p>`; return; }
+    box.innerHTML = `<ul class="slate">${list.map(g => `<li class="${g.sel ? "" : "off"}"><input type="checkbox" data-id="${esc(g.id)}" ${g.sel ? "checked" : ""}><div class="m"><span class="lg muted small">${esc(g.league)}</span>${tImg(g.teams.away)}<span class="tm">${g.teams.away.rank ? `<sup>#${g.teams.away.rank}</sup>` : ""}${esc(g.teams.away.name)}</span><span class="muted">@</span>${tImg(g.teams.home)}<span class="tm">${g.teams.home.rank ? `<sup>#${g.teams.home.rank}</sup>` : ""}${esc(g.teams.home.name)}</span><span class="muted small">${esc(g.spread || "no line yet")}</span>${pubIds.has(g.id) ? `<span class="muted small">(published)</span>` : ""}<span class="k">${esc(fmtKick(g.kickoff))}${g.tv ? " · " + esc(g.tv) : ""}</span></div></li>`).join("")}</ul>
+      <div class="actions"><button class="btn sm ghost" id="selAll">Select all shown</button><button class="btn sm ghost" id="selNone">Clear</button><span class="count" id="selCount"></span><button class="btn" id="publish">Publish slate</button></div>`;
+    const cnt = () => $("#selCount").textContent = `${state.slate.filter(g => g.sel).length} selected`; cnt();
+    box.querySelectorAll("input[type=checkbox]").forEach(c => c.addEventListener("change", () => { const g = state.slate.find(x => x.id === c.dataset.id); g.sel = c.checked; c.closest("li").classList.toggle("off", !c.checked); cnt(); }));
+    $("#selAll").addEventListener("click", () => { list.forEach(g => g.sel = true); drawSlate(); }); $("#selNone").addEventListener("click", () => { state.slate.forEach(g => g.sel = false); drawSlate(); });
+    $("#publish").addEventListener("click", e => { const sel = state.slate.filter(g => g.sel); if (!sel.length) return msg("Select at least one game.", "err"); if (sel.some(g => g.homeLine == null) && !confirm("Some selected games have no spread yet. Publish anyway? (Players would be picking straight up on those.)")) return;
+      const removed = published.filter(g => !sel.some(s => s.id === g.id)).length; if (removed && !confirm(`This removes ${removed} already-published game${removed > 1 ? "s" : ""} from Week ${state.week}. Continue?`)) return;
+      run(e.target, { action: "publishSlate", week: state.week, games: sel.map(({ sel, final, statusText, ...g }) => g) }, () => `Week ${state.week} slate published (${sel.length} games).`, () => { state.slate = null; renderAdmin(); }); });
+  };
+  $("#loadSlate").addEventListener("click", async e => { e.target.disabled = true; msg(""); try { const evs = await fetchWeekEvents(state.week); const pubIds = new Set(published.map(g => g.id)); state.slate = evs.map(g => ({ ...g, sel: pubIds.has(g.id) })); if (!evs.length) msg("ESPN returned no games for this week — is the week number right?", "err"); } catch (err) { msg(`Couldn't load from ESPN: ${esc(err.message)}`, "err"); } e.target.disabled = false; drawSlate(); });
+  $("#hideThu").addEventListener("change", e => { state.hideThu = e.target.checked; drawSlate(); });
+  drawSlate();
+
+  // --- results
+  const results = Object.fromEntries(published.map(g => [g.id, g.result]));
+  const setRes = (id, r) => { results[id] = r; const box = view.querySelector(`.resbtns[data-g="${CSS.escape(id)}"]`); box?.querySelectorAll("button").forEach(b => b.classList.toggle("on", b.dataset.r === r)); };
+  view.querySelectorAll(".resbtns button").forEach(b => b.addEventListener("click", () => setRes(b.parentElement.dataset.g, b.dataset.r)));
+  $("#autoScore")?.addEventListener("click", async e => { e.target.disabled = true; msg(""); try { const live = await fetchWeekEvents(state.week); let n = 0; published.forEach(g => { const l = live.find(x => x.id === g.id); if (!l) return; const sc = view.querySelector(`[data-score="${CSS.escape(g.id)}"]`); if (sc && l.teams.away.score != null) sc.textContent = `${l.teams.away.score}–${l.teams.home.score}${l.final ? "" : " (live)"}`; const r = atsResult(g, l); if (r) { setRes(g.id, r); n++; } if (g.id === tbg?.id && l.final) $("#mnf").value = l.teams.away.score + l.teams.home.score; }); msg(`${n} of ${published.length} games scored from ESPN. Review, then save.`, n === published.length ? "ok" : ""); } catch (err) { msg(`Couldn't fetch scores: ${esc(err.message)}`, "err"); } e.target.disabled = false; });
+  $("#saveRes").addEventListener("click", e => run(e.target, { action: "saveResults", week: state.week, results, mnfActual: $("#mnf").value === "" ? null : Number($("#mnf").value) }, () => `Week ${state.week} results saved.`));
+  $("#sendEmail").addEventListener("click", e => { if (!confirm(`Email Week ${state.week} results to all players now?`)) return; run(e.target, { action: "sendEmail", week: state.week, force: !!state.data.emailedAt && confirm("Already emailed once. Send again?") }, r => r.sent ? `Sent to ${r.recipients} recipients.` : esc(r.reason)); });
+  $("#previewEmail").addEventListener("click", e => run(e.target, { action: "previewEmail", week: state.week }, () => "Preview below.", r => { $("#emailPreview").innerHTML = `<div class="notice" style="background:#fff">${r.html}</div>`; }));
+
+  // --- players
+  const drawPlayers = list => { $("#playersBox").innerHTML = `<div class="scroll"><table><thead><tr><th>Profile name</th><th>Email</th><th>Paid</th><th></th></tr></thead><tbody>${list.map(p => `<tr><td>${esc(p.name)}</td><td>${esc(p.email)}</td><td><label class="chk"><input type="checkbox" data-paid="${esc(p.email)}" ${p.paid ? "checked" : ""}> ${p.paid ? "Yes" : "No"}</label></td><td style="text-align:right"><button class="btn sm ghost" data-reset="${esc(p.email)}">Reset password</button> <button class="btn sm ghost danger" data-remove="${esc(p.email)}">Remove</button></td></tr>`).join("")}</tbody></table></div><p class="muted small">${list.length} registered · ${list.filter(p => p.paid).length} paid · pool $${(list.length * Number(st.entryFee || 0)).toLocaleString()}</p>`;
+    const reload = async () => drawPlayers((await api({ action: "players", pin: state.pin })).players);
+    view.querySelectorAll("[data-paid]").forEach(c => c.addEventListener("change", e => run(e.target, { action: "setPaid", email: c.dataset.paid, paid: c.checked }, () => "Saved.", reload)));
+    view.querySelectorAll("[data-reset]").forEach(b => b.addEventListener("click", e => { const pw = prompt(`New temporary password for ${b.dataset.reset}:`, "1234"); if (pw) run(e.target, { action: "resetPassword", email: b.dataset.reset, password: pw }, () => `Password reset. Tell them to log in with "${esc(pw)}".`); }));
+    view.querySelectorAll("[data-remove]").forEach(b => b.addEventListener("click", e => { if (confirm(`Remove ${b.dataset.remove}? Their past picks stay in the sheet.`)) run(e.target, { action: "removePlayer", email: b.dataset.remove }, () => "Removed.", reload); })); };
+  $("#loadPlayers").addEventListener("click", async e => { const p = pin(); if (!p) return; e.target.disabled = true; try { drawPlayers((await api({ action: "players", pin: p })).players); } catch (err) { msg(esc(err.message), "err"); } e.target.disabled = false; });
+  $("#saveSettings").addEventListener("click", e => { const settings = {}; ["poolName", "entryFee", "prize2", "prize3", "commissionerEmail", "appUrl", "pin"].forEach(k => { const v = $("#s_" + k).value; if (v !== "") settings[k] = v; }); run(e.target, { action: "saveSettings", settings }, () => "Settings saved.", () => { if (settings.pin) state.pin = settings.pin; }); });
+}
+
+/* ---------- boot ---------- */
+function render() { renderChrome(); ({ picks: renderPicks, results: renderResults, standings: renderStandings, admin: renderAdmin })[state.tab](); }
+document.querySelectorAll("nav.tabs button").forEach(b => b.addEventListener("click", () => { state.tab = b.dataset.tab; state.slate = null; render(); }));
+$("#weekSel").addEventListener("change", e => { state.week = Number(e.target.value); state.picks = {}; state.slate = null; render(); });
+$("#prevWk").addEventListener("click", () => { if (state.week > 1) { state.week--; state.picks = {}; state.slate = null; render(); } });
+$("#nextWk").addEventListener("click", () => { if (state.week < MAX_WEEKS) { state.week++; state.picks = {}; state.slate = null; render(); } });
+(async function boot() {
+  $("#setupNotice").hidden = !!API_URL; state.user = store.get("pickem_user");
+  const q = new URLSearchParams(location.search); if (q.get("tab")) state.tab = q.get("tab");
+  if (API_URL) { try { const s = await api({ action: "state", week: 1 }); state.weeksWithGames = s.weeksWithGames || []; state.data = s; } catch (e) { } }
+  if (q.get("week")) state.week = Math.min(MAX_WEEKS, Math.max(1, Number(q.get("week")))); else if (state.weeksWithGames.length) state.week = state.weeksWithGames[state.weeksWithGames.length - 1];
+  render();
+})();
+</script>
+</body>
+</html>
