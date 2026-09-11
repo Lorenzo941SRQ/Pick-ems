@@ -134,7 +134,7 @@
   <div id="msg" class="notice" hidden></div>
   <section id="view"></section>
 </main>
-<footer>1 point per correct pick against the spread posted when the slate was published; a push earns no point. The week's top scorer earns a bonus point, with ties decided by the closest Monday night score prediction (combined total). Season standings rank by total points. Submissions are final. Schedule, lines, scores and logos via ESPN.</footer>
+<footer>1 point per correct pick against the spread posted when the slate was published; a push earns no point. The week's top scorer earns a bonus point, with ties decided by the closest Monday night score prediction (combined total). Season standings rank by total points. Picks can be edited until the weekly lock (Saturday 11:30 AM ET by default). Schedule, lines, scores and logos via ESPN.</footer>
 
 <script>
 /* ================================ CONFIG ================================ */
@@ -150,6 +150,7 @@ const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": 
 const fmtKick = d => new Date(d).toLocaleString(undefined, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 const started = g => new Date(g.kickoff) <= new Date();
 const tiebreakGame = games => games.length ? games[games.length - 1] : null;
+const fmtET = d => new Date(d).toLocaleString("en-US", { timeZone: "America/New_York", weekday: "long", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) + " ET";
 function msg(text, kind) { const el = $("#msg"); if (!text) { el.hidden = true; return; } el.className = "notice " + (kind || ""); el.innerHTML = text; el.hidden = false; }
 function loading() { view.innerHTML = `<div class="ticket"><div class="skeleton" style="width:40%"></div><div class="skeleton"></div><div class="skeleton" style="width:80%"></div></div>`; }
 const store = { get(k) { try { return JSON.parse(localStorage.getItem(k)); } catch { return null; } }, set(k, v) { try { v == null ? localStorage.removeItem(k) : localStorage.setItem(k, JSON.stringify(v)); } catch { } } };
@@ -258,19 +259,21 @@ async function renderPicks(seq = renderSeq) {
   if (!state.user) { view.innerHTML = authPanel(); bindAuth(); return; }
   warm();
   const games = state.data.games || []; if (!games.length) return view.innerHTML = `<div class="ticket"><h2>Week ${state.week}</h2><p class="muted">The commissioner hasn't posted this week's games yet.</p></div>`;
-  const tbg = tiebreakGame(games); const mine = state.data.mine;
-  if (mine) {
-    view.innerHTML = `<div class="ticket"><h2>Week ${state.week} — your submission</h2><div class="notice ok" style="margin-top:8px"><b>Locked in.</b> Submitted ${esc(new Date(mine.ts).toLocaleString())}. Submissions are final and can't be changed.</div>
-      <ul class="games">${games.map(g => gameRow(g, { pick: mine.picks[g.id], interactive: false, showResult: true, isTb: g.id === tbg.id })).join("")}</ul>
-      <div class="tie"><b>Monday night prediction:</b> ${mine.tb == null ? "none" : `${esc(tbg.teams.away.name)} ${mine.awayPred} – ${esc(tbg.teams.home.name)} ${mine.homePred} (total ${mine.tb})`}${state.data.mnfActual != null ? ` · actual total ${state.data.mnfActual}` : ""}</div></div>`;
+  const tbg = tiebreakGame(games); const mine = state.data.mine; const deadline = state.data.deadline; const locked = !!state.data.locked;
+  if (mine && Object.keys(state.picks).length === 0 && !state.editing) { Object.assign(state.picks, mine.picks); if (mine.awayPred != null) state.awayPred = String(mine.awayPred); if (mine.homePred != null) state.homePred = String(mine.homePred); state.editing = true; }
+  if (locked) {
+    view.innerHTML = `<div class="ticket"><h2>Week ${state.week} — your picks</h2><div class="notice ${mine ? "ok" : "err"}" style="margin-top:8px">${mine ? `<b>Locked.</b> Picks closed ${esc(fmtET(deadline))}. Your last update was ${esc(new Date(mine.ts).toLocaleString())}.` : `<b>Picks closed ${esc(fmtET(deadline))}.</b> You didn't submit this week.`}</div>
+      ${mine ? `<ul class="games">${games.map(g => gameRow(g, { pick: mine.picks[g.id], interactive: false, showResult: true, isTb: g.id === tbg.id })).join("")}</ul>
+      <div class="tie"><b>Monday night prediction:</b> ${mine.tb == null ? "none" : `${esc(tbg.teams.away.name)} ${mine.awayPred} – ${esc(tbg.teams.home.name)} ${mine.homePred} (total ${mine.tb})`}${state.data.mnfActual != null ? ` · actual total ${state.data.mnfActual}` : ""}</div>` : ""}</div>`;
     return;
   }
   const open = games.filter(g => !started(g)).length;
-  view.innerHTML = `<div class="ticket"><h2>Week ${state.week} picks</h2><p class="muted" style="margin:0">${games.length} games · ${open} still open. Tap the side you think covers the spread. <b>You get one submission per week and it can't be changed</b>, so check it before you hit the button.</p>
+  view.innerHTML = `<div class="ticket"><h2>Week ${state.week} picks</h2><p class="muted" style="margin:0">${games.length} games${open < games.length ? ` · ${open} still open` : ""}. Tap the side you think covers the spread. You can change your picks until <b>${esc(fmtET(deadline))}</b>, then they lock.</p>
+    ${mine ? `<div class="notice ok" style="margin-top:10px"><b>Submitted</b> ${esc(new Date(mine.ts).toLocaleString())}. You're editing that submission; hit the button again to save changes.</div>` : ""}
     <ul class="games">${games.map(g => gameRow(g, { pick: state.picks[g.id], interactive: true, isTb: g.id === tbg.id })).join("")}</ul>
     <div class="tie"><b>Monday night score prediction</b> — ${esc(tbg.teams.away.name)} @ ${esc(tbg.teams.home.name)}, ${esc(fmtKick(tbg.kickoff))}. The combined total breaks weekly ties.
       <div class="pred"><label>${esc(tbg.teams.away.name)}<input type="number" id="ap" min="0" max="99" inputmode="numeric" value="${esc(state.awayPred)}" ${started(tbg) ? "disabled" : ""}></label><label>${esc(tbg.teams.home.name)}<input type="number" id="hp" min="0" max="99" inputmode="numeric" value="${esc(state.homePred)}" ${started(tbg) ? "disabled" : ""}></label><span class="tot" id="tot"></span></div></div>
-    <div class="actions"><button class="btn" id="submit">Submit final picks</button><span class="count" id="count"></span></div></div>`;
+    <div class="actions"><button class="btn" id="submit">${mine ? "Update picks" : "Submit picks"}</button><span class="count" id="count"></span></div></div>`;
   const upd = () => { const openG = games.filter(g => !started(g)); const n = openG.filter(g => state.picks[g.id]).length; $("#count").textContent = `${n} of ${openG.length} open games picked`; const a = $("#ap").value, h = $("#hp").value; $("#tot").textContent = a !== "" && h !== "" ? `Total ${Number(a) + Number(h)}` : ""; };
   upd();
   view.querySelectorAll(".team:not(:disabled)").forEach(b => b.addEventListener("click", () => { state.picks[b.dataset.g] = b.dataset.t; view.querySelectorAll(`.team[data-g="${CSS.escape(b.dataset.g)}"]`).forEach(x => { const on = x.dataset.t === b.dataset.t; x.classList.toggle("picked", on); x.setAttribute("aria-pressed", on); }); upd(); }));
@@ -280,10 +283,10 @@ async function renderPicks(seq = renderSeq) {
     if (!Object.keys(picks).length) return msg("Pick at least one game that hasn't started.", "err");
     const missing = openG.length - Object.keys(picks).length; const noPred = !started(tbg) && (state.awayPred === "" || state.homePred === "");
     const warn = [missing ? `${missing} game${missing > 1 ? "s" : ""} left unpicked` : "", noPred ? "no Monday night score prediction" : ""].filter(Boolean).join(" and ");
-    if (!confirm(`Submit your final Week ${state.week} picks?${warn ? `\n\nHeads up: ${warn}.` : ""}\n\nThis cannot be changed afterwards.`)) return;
-    const btn = $("#submit"); btn.disabled = true; btn.textContent = "Submitting…";
-    try { await api(null, { action: "submitPicks", token: state.user.token, week: state.week, picks, awayPred: state.awayPred, homePred: state.homePred }); state.picks = {}; state.awayPred = state.homePred = ""; msg(`<b>Locked in.</b> Your Week ${state.week} picks are recorded.`, "ok"); renderPicks(++renderSeq); }
-    catch (e) { msg(`Submit failed: ${esc(e.message)}`, "err"); btn.disabled = false; btn.textContent = "Submit final picks"; }
+    if (warn && !confirm(`Heads up: ${warn}.\n\nSave anyway? You can still change things until ${fmtET(deadline)}.`)) return;
+    const btn = $("#submit"); const label = btn.textContent; btn.disabled = true; btn.textContent = "Saving…";
+    try { const r = await api(null, { action: "submitPicks", token: state.user.token, week: state.week, picks, awayPred: state.awayPred, homePred: state.homePred }); state.picks = {}; state.awayPred = state.homePred = ""; state.editing = false; renderPicks(++renderSeq); setTimeout(() => msg(`<b>${r.updated ? "Updated" : "Submitted"}.</b> Your Week ${state.week} picks are saved. You can change them until ${esc(fmtET(deadline))}.`, "ok"), 0); }
+    catch (e) { msg(`Couldn't save: ${esc(e.message)}`, "err"); btn.disabled = false; btn.textContent = label; }
   });
 }
 
@@ -296,7 +299,7 @@ async function renderResults(seq = renderSeq, fresh = false) {
   const champ = wk.complete && wk.winners.length ? `<div class="champ"><div><div class="t">Week ${state.week} winner: ${esc(wk.winners.map(w => w.name).join(" & "))}</div><div class="s">${wk.winners[0].correct} of ${games.length} correct${wk.bonus ? ` + ${wk.bonus} bonus = ${wk.winners[0].points} points` : ""}${wk.tiebreakUsed ? ` · won on the Monday night prediction (actual total ${state.data.mnfActual})` : ""}${state.data.emailedAt ? " · results emailed" : ""}</div></div></div>` : "";
   const gmap = Object.fromEntries(games.map(g => [g.id, g]));
   const grid = r => `<div class="grid">${r.cells.map(c => { const g = gmap[c.id]; const lab = c.pick === "hidden" ? "?" : c.pick || "–"; const cls = c.r === "w" ? "w" : c.r === "l" ? "l" : c.pick === "hidden" ? "h" : "p"; return `<span class="cell ${cls}" title="${esc(g ? g.teams.away.name + " @ " + g.teams.home.name : "")}">${esc(lab)}</span>`; }).join("")}</div>`;
-  view.innerHTML = `<div class="ticket"><div class="row" style="justify-content:space-between;align-items:center;margin:0"><h2>Week ${state.week} results</h2><button class="btn sm ghost" id="refreshRes">Refresh</button></div><p class="muted" style="margin:0">${done} of ${games.length} games scored · ${wk.rows.length} submission${wk.rows.length === 1 ? "" : "s"} of ${state.data.playerCount} players${state.data.mnfActual != null ? ` · Monday night total ${state.data.mnfActual}` : ""}. Others' picks show as ? until kickoff.</p>${champ}
+  view.innerHTML = `<div class="ticket"><div class="row" style="justify-content:space-between;align-items:center;margin:0"><h2>Week ${state.week} results</h2><button class="btn sm ghost" id="refreshRes">Refresh</button></div><p class="muted" style="margin:0">${done} of ${games.length} games scored · ${wk.rows.length} submission${wk.rows.length === 1 ? "" : "s"} of ${state.data.playerCount} players${state.data.mnfActual != null ? ` · Monday night total ${state.data.mnfActual}` : ""}. Others' picks show as ? until kickoff.${state.data.deadline ? ` Picks ${state.data.locked ? "locked" : "lock"} ${esc(fmtET(state.data.deadline))}.` : ""}</p>${champ}
     ${wk.rows.length ? `<div class="scroll"><table><thead><tr><th class="rank">#</th><th>Player</th><th class="num">Points</th><th class="num">Correct</th><th>MNF prediction</th><th class="num">Off by</th><th>Picks</th></tr></thead><tbody>${wk.rows.map(r => `<tr class="${wk.complete && r.rank === 1 ? "first" : ""}"><td class="rank">${r.rank}</td><td>${esc(r.name)}</td><td class="num"><b>${r.points}</b>${r.bonus ? ` <span class="muted small">(+${r.bonus})</span>` : ""}</td><td class="num">${r.correct}/${games.length}</td><td>${r.tb == null ? "–" : r.tb === "hidden" || r.awayPred == null ? "hidden until kickoff" : `${esc(tbg.away)} ${r.awayPred} – ${esc(tbg.home)} ${r.homePred} (${r.tb})`}</td><td class="num">${r.tbDiff ?? "–"}</td><td>${grid(r)}</td></tr>`).join("")}</tbody></table></div>` : `<p class="muted">No submissions yet.</p>`}</div>
     <div class="ticket"><h2>Scoreboard</h2><ul class="games">${games.map(g => gameRow(g, { interactive: false, showResult: true, isTb: g.id === tbg.id })).join("")}</ul></div>`;
   $("#refreshRes").addEventListener("click", () => renderResults(++renderSeq, true));
@@ -339,6 +342,7 @@ async function renderAdmin(seq = renderSeq) {
 
     <div class="ticket"><h2>4 · Pool settings</h2>
       <div class="row"><label class="f">Pool name<input id="s_poolName" value="${esc(st.poolName || "")}"></label><label class="f">Entry fee ($)<input id="s_entryFee" type="number" value="${esc(st.entryFee || "")}"></label><label class="f">2nd prize ($)<input id="s_prize2" type="number" value="${esc(st.prize2 || "")}"></label><label class="f">3rd prize ($)<input id="s_prize3" type="number" value="${esc(st.prize3 || "")}"></label><label class="f">Weekly winner bonus (points)<input id="s_weeklyBonus" type="number" min="0" value="${esc(st.weeklyBonus ?? "1")}"></label></div>
+      <div class="row"><label class="f">Picks lock on (day)<select id="s_lockDay">${["Thu","Fri","Sat","Sun"].map(d => `<option ${(st.lockDay || "Sat") === d ? "selected" : ""}>${d}</option>`).join("")}</select></label><label class="f">Picks lock at (Eastern time)<input id="s_lockTime" type="time" value="${esc(st.lockTime || "11:30")}"></label><span class="muted small" style="flex:2 1 260px">Everyone can edit their picks until this moment in the slate's week. Games that kick off earlier still lock individually.</span></div>
       <div class="row"><label class="f">Commissioner email (results go To: you, players Bcc'd)<input id="s_commissionerEmail" value="${esc(st.commissionerEmail || "")}"></label><label class="f">Link to this page (added to emails)<input id="s_appUrl" value="${esc(st.appUrl || location.href.split("?")[0])}"></label><label class="f">New PIN (blank = keep)<input id="s_pin" type="password" autocomplete="off"></label></div>
       <p class="muted small" style="margin:6px 0 0">1st prize = entry fee × registered players − 2nd − 3rd.</p>
       <div class="actions"><button class="btn sm" id="saveSettings">Save settings</button></div></div>`;
@@ -377,16 +381,16 @@ async function renderAdmin(seq = renderSeq) {
     view.querySelectorAll("[data-reset]").forEach(b => b.addEventListener("click", e => { const pw = prompt(`New temporary password for ${b.dataset.reset}:`, "1234"); if (pw) run(e.target, { action: "resetPassword", email: b.dataset.reset, password: pw }, () => `Password reset. Tell them to log in with "${esc(pw)}".`); }));
     view.querySelectorAll("[data-remove]").forEach(b => b.addEventListener("click", e => { if (confirm(`Remove ${b.dataset.remove}? Their past picks stay in the sheet.`)) run(e.target, { action: "removePlayer", email: b.dataset.remove }, () => "Removed.", reload); })); };
   $("#loadPlayers").addEventListener("click", async e => { const p = pin(); if (!p) return; e.target.disabled = true; try { drawPlayers((await api({ action: "players", pin: p })).players); } catch (err) { msg(esc(err.message), "err"); } e.target.disabled = false; });
-  $("#saveSettings").addEventListener("click", e => { const settings = {}; ["poolName", "entryFee", "prize2", "prize3", "weeklyBonus", "commissionerEmail", "appUrl", "pin"].forEach(k => { const v = $("#s_" + k).value; if (v !== "") settings[k] = v; }); run(e.target, { action: "saveSettings", settings }, () => "Settings saved.", () => { if (settings.pin) state.pin = settings.pin; }); });
+  $("#saveSettings").addEventListener("click", e => { const settings = {}; ["poolName", "entryFee", "prize2", "prize3", "weeklyBonus", "lockDay", "lockTime", "commissionerEmail", "appUrl", "pin"].forEach(k => { const v = $("#s_" + k).value; if (v !== "") settings[k] = v; }); run(e.target, { action: "saveSettings", settings }, () => "Settings saved.", () => { if (settings.pin) state.pin = settings.pin; }); });
 }
 
 /* ---------- boot ---------- */
 let renderSeq = 0; const stale = seq => seq !== renderSeq;   // ignore responses for a tab the user already left
 function render() { renderChrome(); const seq = ++renderSeq; ({ picks: renderPicks, results: renderResults, standings: renderStandings, admin: renderAdmin })[state.tab](seq); }
 document.querySelectorAll("nav.tabs button").forEach(b => b.addEventListener("click", () => { state.tab = b.dataset.tab; state.slate = null; render(); }));
-$("#weekSel").addEventListener("change", e => { state.week = Number(e.target.value); state.picks = {}; state.slate = null; render(); });
-$("#prevWk").addEventListener("click", () => { if (state.week > 1) { state.week--; state.picks = {}; state.slate = null; render(); } });
-$("#nextWk").addEventListener("click", () => { if (state.week < MAX_WEEKS) { state.week++; state.picks = {}; state.slate = null; render(); } });
+$("#weekSel").addEventListener("change", e => { state.week = Number(e.target.value); state.picks = {}; state.editing = false; state.awayPred = state.homePred = ""; state.slate = null; render(); });
+$("#prevWk").addEventListener("click", () => { if (state.week > 1) { state.week--; state.picks = {}; state.editing = false; state.awayPred = state.homePred = ""; state.slate = null; render(); } });
+$("#nextWk").addEventListener("click", () => { if (state.week < MAX_WEEKS) { state.week++; state.picks = {}; state.editing = false; state.awayPred = state.homePred = ""; state.slate = null; render(); } });
 (async function boot() {
   $("#setupNotice").hidden = !!API_URL; state.user = store.get("pickem_user");
   const q = new URLSearchParams(location.search); if (q.get("tab")) state.tab = q.get("tab");
