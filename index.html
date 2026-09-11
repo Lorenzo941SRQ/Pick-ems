@@ -5,6 +5,10 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Football Pick'em Pool</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://script.google.com">
+<link rel="preconnect" href="https://script.googleusercontent.com">
+<link rel="preconnect" href="https://a.espncdn.com">
+<link rel="preconnect" href="https://site.api.espn.com">
 <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;800&family=Barlow:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
   :root{--field:#123B2A;--field-deep:#0C2A1E;--chalk:#F3F0E6;--chalk-2:#E6E1D2;--ink:#1B1B1B;--ink-soft:#5A5A52;--gold:#E8B443;--gold-ink:#3E2E05;--win:#2F8F5B;--loss:#B8412F;--push:#8A8A80;--line:#CFC9B7;--r:6px}
@@ -151,17 +155,28 @@ function loading() { view.innerHTML = `<div class="ticket"><div class="skeleton"
 const store = { get(k) { try { return JSON.parse(localStorage.getItem(k)); } catch { return null; } }, set(k, v) { try { v == null ? localStorage.removeItem(k) : localStorage.setItem(k, JSON.stringify(v)); } catch { } } };
 function lineText(g, side) { if (g.homeLine == null) return g.spread || ""; const n = Math.abs(g.homeLine); if (n === 0) return "PK"; const homeFav = g.homeLine < 0; return (side === "home") === homeFav ? `-${n}` : `+${n}`; }
 const mono = abbr => `<span class="mono">${esc(String(abbr || "?").slice(0, 3))}</span>`;
-const tImg = t => t.logo ? `<img src="${esc(t.logo)}" alt="" loading="lazy">` : mono(t.abbr);
+const tImg = t => t && t.logo ? `<img src="${esc(t.logo)}" alt="" loading="lazy">` : mono(t && t.abbr);
 
 /* ---------- backend ---------- */
-async function api(params, body) {
+const cache = {};   // GET responses, keyed by query, kept for 30s so tab clicks don't re-hit Google
+const CACHE_MS = 30000;
+async function api(params, body, opts = {}) {
   if (!API_URL) throw new Error("API_URL isn't set in index.html yet");
-  let r;
-  if (body) r = await fetch(API_URL, { method: "POST", redirect: "follow", body: JSON.stringify({ season: state.season, ...body }) });
-  else { const u = new URL(API_URL); Object.entries({ season: state.season, ...params }).forEach(([k, v]) => v != null && v !== "" && u.searchParams.set(k, v)); r = await fetch(u, { redirect: "follow" }); }
-  const j = await r.json(); if (!j.ok) throw new Error(j.error || "Backend error"); return j;
+  const ctrl = new AbortController(); const timer = setTimeout(() => ctrl.abort(), 20000);
+  try {
+    let r, key;
+    if (body) { Object.keys(cache).forEach(k => delete cache[k]); r = await fetch(API_URL, { method: "POST", redirect: "follow", body: JSON.stringify({ season: state.season, ...body }), signal: ctrl.signal }); }
+    else {
+      const u = new URL(API_URL); Object.entries({ season: state.season, ...params }).forEach(([k, v]) => v != null && v !== "" && u.searchParams.set(k, v)); key = u.toString();
+      const c = cache[key]; if (c && !opts.fresh && Date.now() - c.t < CACHE_MS) return c.j;
+      r = await fetch(u, { redirect: "follow", signal: ctrl.signal });
+    }
+    const j = await r.json(); if (!j.ok) throw new Error(j.error || "Backend error");
+    if (key) cache[key] = { t: Date.now(), j }; return j;
+  } catch (e) { if (e.name === "AbortError") throw new Error("Google's script service didn't answer in time. Wait a few seconds and try again."); throw e; }
+  finally { clearTimeout(timer); }
 }
-async function loadWeek() { state.data = await api({ action: "state", week: state.week, token: state.user?.token }); state.weeksWithGames = state.data.weeksWithGames || []; if (state.user && !state.data.me) { logout(false); } else if (state.data.me) { state.user = { ...state.user, ...state.data.me }; store.set("pickem_user", state.user); } }
+async function loadWeek(fresh) { state.data = await api({ action: "state", week: state.week, token: state.user?.token }, null, { fresh }); state.weeksWithGames = state.data.weeksWithGames || []; if (state.user && !state.data.me) { logout(false); } else if (state.data.me) { state.user = { ...state.user, ...state.data.me }; store.set("pickem_user", state.user); } }
 
 /* ---------- ESPN slate + scores ---------- */
 function parseEvent(ev, league) {
@@ -224,7 +239,7 @@ function renderChrome() {
 }
 function gameRow(g, o) {
   const lock = started(g);
-  const btn = (side) => { const t = g.teams[side], abbr = g[side]; const cls = ["team", side, o.pick === abbr ? "picked" : "", o.showResult && g.result ? (g.result === abbr ? "covered" : g.result === "PUSH" ? "" : "failed") : ""].join(" ");
+  const btn = (side) => { const t = (g.teams && g.teams[side]) || { abbr: g[side], name: g[side] }, abbr = g[side]; const cls = ["team", side, o.pick === abbr ? "picked" : "", o.showResult && g.result ? (g.result === abbr ? "covered" : g.result === "PUSH" ? "" : "failed") : ""].join(" ");
     return `<button class="${cls}" data-g="${esc(g.id)}" data-t="${esc(abbr)}" ${o.interactive && !lock ? "" : "disabled"} aria-pressed="${o.pick === abbr}">${tImg(t)}<span><span class="tn">${t.rank ? `<sup>#${t.rank}</sup>` : ""}${esc(t.name)}</span><span class="tl">${esc(lineText(g, side))}${t.record ? ` · ${esc(t.record)}` : ""}</span></span></button>`; };
   const meta = `<span class="lg">${esc(g.league)}</span><span class="at">@</span><span>${esc(fmtKick(g.kickoff))}</span>${g.tv ? `<span>${esc(g.tv)}</span>` : ""}`;
   const bits = [`Spread <b>${esc(g.spread || "—")}</b>`]; if (o.showResult && g.result) bits.push(`<b>${g.result === "PUSH" ? "Push" : esc(g.result) + " covered"}</b>`); if (o.interactive && lock) bits.push(`<span class="muted">Locked</span>`); if (o.isTb) bits.push(`<b>Monday night tiebreaker game</b>`);
@@ -268,14 +283,14 @@ async function renderPicks() {
 
 /* ---------- results ---------- */
 async function renderResults() {
-  loading(); msg(""); try { await loadWeek(); } catch (e) { return view.innerHTML = `<div class="notice err">Couldn't load results (${esc(e.message)}).</div>`; }
+  loading(); msg(""); try { await loadWeek(true); } catch (e) { return view.innerHTML = `<div class="notice err">Couldn't load results (${esc(e.message)}).</div>`; }
   const games = state.data.games || [], wk = state.data.week, done = games.filter(g => g.result).length, tbg = tiebreakGame(games);
   if (!games.length) return view.innerHTML = `<div class="ticket"><h2>Week ${state.week}</h2><p class="muted">No games posted for this week.</p></div>`;
   const champ = wk.complete && wk.winners.length ? `<div class="champ"><div><div class="t">Week ${state.week} winner: ${esc(wk.winners.map(w => w.name).join(" & "))}</div><div class="s">${wk.winners[0].correct} of ${games.length} correct${wk.tiebreakUsed ? ` · won on the Monday night prediction (actual total ${state.data.mnfActual})` : ""}${state.data.emailedAt ? " · results emailed" : ""}</div></div></div>` : "";
   const gmap = Object.fromEntries(games.map(g => [g.id, g]));
   const grid = r => `<div class="grid">${r.cells.map(c => { const g = gmap[c.id]; const lab = c.pick === "hidden" ? "?" : c.pick || "–"; const cls = c.r === "w" ? "w" : c.r === "l" ? "l" : c.pick === "hidden" ? "h" : "p"; return `<span class="cell ${cls}" title="${esc(g ? g.teams.away.name + " @ " + g.teams.home.name : "")}">${esc(lab)}</span>`; }).join("")}</div>`;
   view.innerHTML = `<div class="ticket"><h2>Week ${state.week} results</h2><p class="muted" style="margin:0">${done} of ${games.length} games scored · ${wk.rows.length} submission${wk.rows.length === 1 ? "" : "s"} of ${state.data.playerCount} players${state.data.mnfActual != null ? ` · Monday night total ${state.data.mnfActual}` : ""}. Others' picks show as ? until kickoff.</p>${champ}
-    ${wk.rows.length ? `<div class="scroll"><table><thead><tr><th class="rank">#</th><th>Player</th><th class="num">Correct</th><th class="num">Wrong</th><th>MNF prediction</th><th class="num">Off by</th><th>Picks</th></tr></thead><tbody>${wk.rows.map(r => `<tr class="${wk.complete && r.rank === 1 ? "first" : ""}"><td class="rank">${r.rank}</td><td>${esc(r.name)}</td><td class="num"><b>${r.correct}</b></td><td class="num">${r.wrong}</td><td>${r.tb == null ? "–" : started(tbg) ? `${esc(tbg.away)} ${r.awayPred} – ${esc(tbg.home)} ${r.homePred} (${r.tb})` : "hidden"}</td><td class="num">${r.tbDiff ?? "–"}</td><td>${grid(r)}</td></tr>`).join("")}</tbody></table></div>` : `<p class="muted">No submissions yet.</p>`}</div>
+    ${wk.rows.length ? `<div class="scroll"><table><thead><tr><th class="rank">#</th><th>Player</th><th class="num">Correct</th><th class="num">Wrong</th><th>MNF prediction</th><th class="num">Off by</th><th>Picks</th></tr></thead><tbody>${wk.rows.map(r => `<tr class="${wk.complete && r.rank === 1 ? "first" : ""}"><td class="rank">${r.rank}</td><td>${esc(r.name)}</td><td class="num"><b>${r.correct}</b></td><td class="num">${r.wrong}</td><td>${r.tb == null ? "–" : r.tb === "hidden" || r.awayPred == null ? "hidden until kickoff" : `${esc(tbg.away)} ${r.awayPred} – ${esc(tbg.home)} ${r.homePred} (${r.tb})`}</td><td class="num">${r.tbDiff ?? "–"}</td><td>${grid(r)}</td></tr>`).join("")}</tbody></table></div>` : `<p class="muted">No submissions yet.</p>`}</div>
     <div class="ticket"><h2>Scoreboard</h2><ul class="games">${games.map(g => gameRow(g, { interactive: false, showResult: true, isTb: g.id === tbg.id })).join("")}</ul></div>`;
 }
 
@@ -291,7 +306,7 @@ async function renderStandings() {
 
 /* ---------- commissioner ---------- */
 async function renderAdmin() {
-  loading(); msg(""); try { await loadWeek(); } catch (e) { return view.innerHTML = `<div class="notice err">Couldn't reach the backend (${esc(e.message)}).</div>`; }
+  loading(); msg(""); try { await loadWeek(true); } catch (e) { return view.innerHTML = `<div class="notice err">Couldn't reach the backend (${esc(e.message)}).</div>`; }
   const published = state.data.games || [], st = state.data.settings || {}; const tbg = tiebreakGame(published);
   const pin = () => { state.pin = $("#pin").value; if (!state.pin) { msg("Enter the commissioner PIN first.", "err"); return null; } return state.pin; };
   const run = async (btn, body, okText, after) => { const p = pin(); if (!p) return; btn.disabled = true; try { const r = await api(null, { pin: p, ...body }); msg(okText(r), "ok"); after && await after(r); } catch (e) { msg(esc(e.message), "err"); } btn.disabled = false; };
@@ -364,7 +379,8 @@ $("#nextWk").addEventListener("click", () => { if (state.week < MAX_WEEKS) { sta
 (async function boot() {
   $("#setupNotice").hidden = !!API_URL; state.user = store.get("pickem_user");
   const q = new URLSearchParams(location.search); if (q.get("tab")) state.tab = q.get("tab");
-  if (API_URL) { try { const s = await api({ action: "state", week: 1 }); state.weeksWithGames = s.weeksWithGames || []; state.data = s; } catch (e) { } }
+  loading();
+  if (API_URL) { try { const s = await api({ action: "state", week: 1, token: state.user?.token }); state.weeksWithGames = s.weeksWithGames || []; state.data = s; } catch (e) { } }
   if (q.get("week")) state.week = Math.min(MAX_WEEKS, Math.max(1, Number(q.get("week")))); else if (state.weeksWithGames.length) state.week = state.weeksWithGames[state.weeksWithGames.length - 1];
   render();
 })();
