@@ -111,9 +111,6 @@
   @keyframes pulse{50%{opacity:.5}}
   @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
   @media (max-width:560px){.game{grid-template-columns:1fr;grid-template-areas:"meta" "away" "home" "line"}.team.home{flex-direction:row;text-align:left}main,header,footer{padding-left:12px;padding-right:12px}.ticket{padding:14px}}
-  details.acct summary{cursor:pointer;font-weight:600}details.acct[open] summary{margin-bottom:6px}
-  .pcard{display:flex;gap:12px;flex-wrap:wrap;align-items:center;justify-content:space-between}
-  .unmatched{color:var(--loss);font-weight:600}
 </style>
 </head>
 <body>
@@ -147,7 +144,7 @@ const MAX_WEEKS = 18;
 /* ======================================================================== */
 
 const ESPN = "https://site.api.espn.com/apis/site/v2/sports/football";
-const state = { season: SEASON, week: 1, tab: "picks", user: null, data: null, picks: {}, awayPred: "", homePred: "", pin: "", authMode: "login", slate: null, hideThu: true, weeksWithGames: [] };
+const state = { season: SEASON, week: 1, tab: "picks", user: null, data: null, picks: {}, awayPred: "", homePred: "", pin: "", authMode: "login", slate: null, hideThu: true, showUnranked: false, weeksWithGames: [] };
 const $ = s => document.querySelector(s); const view = $("#view");
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const fmtKick = d => new Date(d).toLocaleString(undefined, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
@@ -173,10 +170,12 @@ async function api(params, body, opts = {}) {
     else {
       const u = new URL(API_URL); Object.entries({ season: state.season, ...params }).forEach(([k, v]) => v != null && v !== "" && u.searchParams.set(k, v)); key = u.toString();
       const c = cache[key]; if (c && !opts.fresh && Date.now() - c.t < CACHE_MS) return c.j;
+      if (!opts.fresh && opts.onFresh) { const snap = store.get("snap:" + key); if (snap && snap.j) {   // paint the last known data now, refresh quietly
+        clearTimeout(timer); api(params, null, { fresh: true }).then(j => { if (JSON.stringify(j) !== JSON.stringify(snap.j)) opts.onFresh(j); }).catch(() => { }); return snap.j; } }
       r = await fetch(u, { redirect: "follow", signal: ctrl.signal });
     }
     const j = await r.json(); if (!j.ok) throw new Error(j.error || "Backend error");
-    if (key) cache[key] = { t: Date.now(), j }; return j;
+    if (key) { cache[key] = { t: Date.now(), j }; store.set("snap:" + key, { t: Date.now(), j }); } return j;
   } catch (e) { if (e.name === "AbortError") throw new Error("Google's script service didn't answer in time. Wait a few seconds and try again."); throw e; }
   finally { clearTimeout(timer); }
 }
@@ -184,7 +183,7 @@ function stateKey(week) { const u = new URL(API_URL); Object.entries({ season: s
 function warm() { // pre-load the other tabs in the background so switching is instant
   api({ action: "standings" }).catch(() => { });
 }
-async function loadWeek(fresh) { state.data = await api({ action: "state", week: state.week, token: state.user?.token }, null, { fresh }); state.weeksWithGames = state.data.weeksWithGames || []; if (state.user && !state.data.me) { logout(false); } else if (state.data.me) { state.user = { ...state.user, ...state.data.me }; store.set("pickem_user", state.user); } }
+async function loadWeek(fresh, seq) { state.data = await api({ action: "state", week: state.week, token: state.user?.token }, null, { fresh, onFresh: seq == null ? null : () => { if (!stale(seq) && state.tab !== "admin") render(); } }); state.weeksWithGames = state.data.weeksWithGames || []; if (state.user && !state.data.me) { logout(false); } else if (state.data.me) { state.user = { ...state.user, ...state.data.me }; store.set("pickem_user", state.user); } }
 
 /* ---------- ESPN slate + scores ---------- */
 function parseEvent(ev, league) {
@@ -204,12 +203,20 @@ const ymd = d => new Date(d).toISOString().slice(0, 10).replace(/-/g, "");
 async function fetchWeekEvents(week) {
   const nfl = await (await fetch(`${ESPN}/nfl/scoreboard?seasontype=2&week=${week}&dates=${state.season}`)).json();
   const nflGames = (nfl.events || []).map(e => parseEvent(e, "NFL"));
+  const info = { nfl: nflGames.length, cfb: 0, ranked: 0, errors: [] };
   let cfbGames = [];
   if (nflGames.length) {
     const ds = nflGames.map(g => new Date(g.kickoff).getTime()); const lo = new Date(Math.min(...ds) - 36e5 * 36), hi = new Date(Math.max(...ds) + 36e5 * 12);
-    try { const cfb = await (await fetch(`${ESPN}/college-football/scoreboard?groups=80&limit=400&dates=${ymd(lo)}-${ymd(hi)}`)).json(); cfbGames = (cfb.events || []).map(e => parseEvent(e, "NCAA")).filter(g => (g.teams.away.rank || g.teams.home.rank) && new Date(g.kickoff) >= lo && new Date(g.kickoff) <= hi); } catch (e) { }
+    // ask ESPN one calendar day at a time — the college feed is unreliable with date ranges
+    const days = []; for (let t = new Date(lo); t <= hi; t = new Date(t.getTime() + 864e5)) days.push(ymd(t)); if (!days.includes(ymd(hi))) days.push(ymd(hi));
+    const seen = new Set();
+    await Promise.all([...new Set(days)].map(async d => {
+      try { const j = await (await fetch(`${ESPN}/college-football/scoreboard?groups=80&limit=300&dates=${d}`)).json(); (j.events || []).forEach(e => { if (seen.has(String(e.id))) return; seen.add(String(e.id)); const g = parseEvent(e, "NCAA"); if (new Date(g.kickoff) >= lo && new Date(g.kickoff) <= hi) cfbGames.push(g); }); }
+      catch (e) { info.errors.push(`${d}: ${e.message}`); }
+    }));
+    info.cfb = cfbGames.length; cfbGames.forEach(g => { g.ranked = !!(g.teams.away.rank || g.teams.home.rank); if (g.ranked) info.ranked++; });
   }
-  return [...nflGames, ...cfbGames].sort((a, b) => new Date(a.kickoff) - new Date(b.kickoff));
+  const games = [...nflGames, ...cfbGames].sort((a, b) => new Date(a.kickoff) - new Date(b.kickoff)); games.info = info; return games;
 }
 function atsResult(g, live) { // live = parsed ESPN event with scores
   if (!live?.final || live.teams.home.score == null || live.teams.away.score == null || g.homeLine == null) return null;
@@ -217,19 +224,30 @@ function atsResult(g, live) { // live = parsed ESPN event with scores
 }
 
 /* ---------- auth ---------- */
-function logout(rerender = true) { state.user = null; store.set("pickem_user", null); renderWho(); if (rerender) render(); }
-function renderWho() { $("#who").innerHTML = state.user ? `<span>${esc(state.user.name)}</span><button id="logoutBtn">Log out</button>` : ""; $("#logoutBtn")?.addEventListener("click", () => logout()); }
+function logout(rerender = true) { state.user = null; store.set("pickem_user", null); try { Object.keys(localStorage).filter(k => k.startsWith("snap:")).forEach(k => localStorage.removeItem(k)); } catch { } renderWho(); if (rerender) render(); }
+function renderWho() { $("#who").innerHTML = state.user ? `<span>${esc(state.user.name)}</span><button id="acctBtn">Account</button><button id="logoutBtn">Log out</button>` : ""; $("#logoutBtn")?.addEventListener("click", () => logout()); $("#acctBtn")?.addEventListener("click", () => { state.tab = "account"; render(); }); }
 function authPanel() {
   const reg = state.authMode === "register";
+  if (state.authMode === "forgot") return `<div class="ticket authbox"><h2>Reset your password</h2><p class="muted" style="margin:0">Enter your email and we'll send a 6-digit code. Then enter the code with a new password.</p>
+    <div class="row"><label class="f">Email<input type="email" id="f_email" autocomplete="email" value="${esc(state.forgotEmail || "")}"></label><button class="btn sm" id="f_send" style="align-self:flex-end">Send code</button></div>
+    <div class="row"><label class="f" style="max-width:160px">Code<input type="text" id="f_code" inputmode="numeric" maxlength="6" autocomplete="one-time-code"></label><label class="f">New password<input type="password" id="f_pw" autocomplete="new-password"></label></div>
+    <div class="actions"><button class="btn" id="f_go">Set new password</button><button class="btn ghost sm" id="f_back">Back to log in</button></div></div>`;
   return `<div class="ticket authbox"><h2>${reg ? "Create your login" : "Log in"}</h2><p class="muted" style="margin:0">${reg ? "Your email is your login; your profile name is what shows on the leaderboard." : "Use the email and password you signed up with."}</p>
     <div class="segs"><button class="${reg ? "" : "on"}" data-m="login">Log in</button><button class="${reg ? "on" : ""}" data-m="register">Create login</button></div>
     <div class="row"><label class="f">Email<input type="email" id="a_email" autocomplete="email"></label></div>
     ${reg ? `<div class="row"><label class="f">Profile name<input type="text" id="a_name" maxlength="30" autocomplete="nickname" placeholder="e.g. Big Lou"></label></div>` : ""}
     <div class="row"><label class="f">Password<input type="password" id="a_pw" autocomplete="${reg ? "new-password" : "current-password"}"></label></div>
-    <div class="actions"><button class="btn" id="a_go">${reg ? "Create login" : "Log in"}</button>${reg ? "" : `<span class="muted small">Forgot it? Ask the commissioner to reset it.</span>`}</div></div>`;
+    <div class="actions"><button class="btn" id="a_go">${reg ? "Create login" : "Log in"}</button>${reg ? "" : `<button class="btn ghost sm" id="a_forgot">Forgot password?</button>`}</div></div>`;
 }
 function bindAuth() {
+  if (state.authMode === "forgot") {
+    $("#f_back").addEventListener("click", () => { state.authMode = "login"; render(); });
+    $("#f_send").addEventListener("click", async e => { const email = $("#f_email").value.trim(); if (!email) return msg("Enter your email first.", "err"); e.target.disabled = true; try { await api(null, { action: "requestReset", email }); state.forgotEmail = email; msg("If that email has an account, a code is on its way. Check spam if it doesn't show up within a minute.", "ok"); } catch (err) { msg(esc(err.message), "err"); } e.target.disabled = false; });
+    $("#f_go").addEventListener("click", async e => { e.target.disabled = true; try { const r = await api(null, { action: "resetWithCode", email: $("#f_email").value, code: $("#f_code").value, newPassword: $("#f_pw").value }); state.user = r.user; store.set("pickem_user", r.user); state.authMode = "login"; renderWho(); render(); setTimeout(() => msg(`Password updated. Welcome back, ${esc(r.user.name)}.`, "ok"), 0); } catch (err) { msg(esc(err.message), "err"); e.target.disabled = false; } });
+    return;
+  }
   view.querySelectorAll(".segs button").forEach(b => b.addEventListener("click", () => { state.authMode = b.dataset.m; render(); }));
+  $("#a_forgot")?.addEventListener("click", () => { state.authMode = "forgot"; state.forgotEmail = $("#a_email").value; render(); });
   const go = async () => {
     const btn = $("#a_go"); btn.disabled = true; msg("");
     try { const body = state.authMode === "register" ? { action: "register", email: $("#a_email").value, name: $("#a_name").value, password: $("#a_pw").value } : { action: "login", email: $("#a_email").value, password: $("#a_pw").value };
@@ -241,12 +259,12 @@ function bindAuth() {
 
 /* ---------- chrome ---------- */
 function renderChrome() {
-  document.querySelectorAll("nav.tabs button").forEach(b => b.setAttribute("aria-selected", b.dataset.tab === state.tab));
+  document.querySelectorAll("nav.tabs button").forEach(b => b.setAttribute("aria-selected", b.dataset.tab === state.tab || (state.tab === "account" && b.dataset.tab === "picks")));
   const sel = $("#weekSel"); sel.innerHTML = ""; for (let w = 1; w <= MAX_WEEKS; w++) { const o = document.createElement("option"); o.value = w; o.textContent = `Week ${w}` + (state.weeksWithGames.includes(w) ? "" : " ·"); sel.appendChild(o); } sel.value = state.week;
   $("#seasonLabel").textContent = `${state.season} season`; if (state.data?.settings?.poolName) $("#poolName").firstChild.textContent = state.data.settings.poolName; renderWho();
 }
 function gameRow(g, o) {
-  const lock = started(g) && !o.force;   // force: commissioner entering picks after kickoff
+  const lock = started(g);
   const btn = (side) => { const t = (g.teams && g.teams[side]) || { abbr: g[side], name: g[side] }, abbr = g[side]; const cls = ["team", side, o.pick === abbr ? "picked" : "", o.showResult && g.result ? (g.result === abbr ? "covered" : g.result === "PUSH" ? "" : "failed") : ""].join(" ");
     return `<button class="${cls}" data-g="${esc(g.id)}" data-t="${esc(abbr)}" ${o.interactive && !lock ? "" : "disabled"} aria-pressed="${o.pick === abbr}">${tImg(t)}<span><span class="tn">${t.rank ? `<sup>#${t.rank}</sup>` : ""}${esc(t.name)}</span><span class="tl">${esc(lineText(g, side))}${t.record ? ` · ${esc(t.record)}` : ""}</span></span></button>`; };
   const meta = `<span class="lg">${esc(g.league)}</span><span class="at">@</span><span>${esc(fmtKick(g.kickoff))}</span>${g.tv ? `<span>${esc(g.tv)}</span>` : ""}`;
@@ -254,22 +272,10 @@ function gameRow(g, o) {
   return `<li class="game ${o.isTb ? "tbg" : ""}">${btn("away")}<div class="meta">${meta}</div>${btn("home")}<div class="line">${bits.join(" ")}</div></li>`;
 }
 
-/* ---------- account ---------- */
-function addAccountPanel() {
-  view.insertAdjacentHTML("beforeend", `<details class="ticket acct"><summary>Account — change your password</summary><p class="muted small" style="margin:0">Logged in as ${esc(state.user.email)}. Forgot your current password? Ask the commissioner to reset it.</p>
-    <div class="row"><label class="f">Current password<input type="password" id="pw_old" autocomplete="current-password"></label><label class="f">New password<input type="password" id="pw_new" autocomplete="new-password"></label><label class="f">New password again<input type="password" id="pw_new2" autocomplete="new-password"></label></div>
-    <div class="actions"><button class="btn sm" id="pw_go">Change password</button></div></details>`);
-  $("#pw_go").addEventListener("click", async e => {
-    const o = $("#pw_old").value, n = $("#pw_new").value, n2 = $("#pw_new2").value;
-    if (n.length < 4) return msg("New password must be at least 4 characters.", "err"); if (n !== n2) return msg("The new passwords don't match.", "err");
-    e.target.disabled = true; try { await api(null, { action: "changePassword", token: state.user.token, oldPassword: o, newPassword: n }); ["#pw_old", "#pw_new", "#pw_new2"].forEach(x => $(x).value = ""); msg("Password changed.", "ok"); } catch (err) { msg(esc(err.message), "err"); } e.target.disabled = false;
-  });
-}
-
 /* ---------- picks ---------- */
 async function renderPicks(seq = renderSeq) {
   msg(""); if (!state.user) { view.innerHTML = authPanel(); bindAuth(); return; }
-  loading(); try { await loadWeek(); } catch (e) { if (stale(seq)) return; return view.innerHTML = `<div class="notice err">Couldn't reach the pool (${esc(e.message)}).</div>`; }
+  loading(); try { await loadWeek(false, seq); } catch (e) { if (stale(seq)) return; return view.innerHTML = `<div class="notice err">Couldn't reach the pool (${esc(e.message)}).</div>`; }
   if (stale(seq)) return;
   if (!state.user) { view.innerHTML = authPanel(); bindAuth(); return; }
   warm();
@@ -280,7 +286,7 @@ async function renderPicks(seq = renderSeq) {
     view.innerHTML = `<div class="ticket"><h2>Week ${state.week} — your picks</h2><div class="notice ${mine ? "ok" : "err"}" style="margin-top:8px">${mine ? `<b>Locked.</b> Picks closed ${esc(fmtET(deadline))}. Your last update was ${esc(new Date(mine.ts).toLocaleString())}.` : `<b>Picks closed ${esc(fmtET(deadline))}.</b> You didn't submit this week.`}</div>
       ${mine ? `<ul class="games">${games.map(g => gameRow(g, { pick: mine.picks[g.id], interactive: false, showResult: true, isTb: g.id === tbg.id })).join("")}</ul>
       <div class="tie"><b>Monday night prediction:</b> ${mine.tb == null ? "none" : `${esc(tbg.teams.away.name)} ${mine.awayPred} – ${esc(tbg.teams.home.name)} ${mine.homePred} (total ${mine.tb})`}${state.data.mnfActual != null ? ` · actual total ${state.data.mnfActual}` : ""}</div>` : ""}</div>`;
-    addAccountPanel(); return;
+    return;
   }
   const open = games.filter(g => !started(g)).length;
   view.innerHTML = `<div class="ticket"><h2>Week ${state.week} picks</h2><p class="muted" style="margin:0">${games.length} games${open < games.length ? ` · ${open} still open` : ""}. Tap the side you think covers the spread. You can change your picks until <b>${esc(fmtET(deadline))}</b>, then they lock.</p>
@@ -289,7 +295,6 @@ async function renderPicks(seq = renderSeq) {
     <div class="tie"><b>Monday night score prediction</b> — ${esc(tbg.teams.away.name)} @ ${esc(tbg.teams.home.name)}, ${esc(fmtKick(tbg.kickoff))}. The combined total breaks weekly ties.
       <div class="pred"><label>${esc(tbg.teams.away.name)}<input type="number" id="ap" min="0" max="99" inputmode="numeric" value="${esc(state.awayPred)}" ${started(tbg) ? "disabled" : ""}></label><label>${esc(tbg.teams.home.name)}<input type="number" id="hp" min="0" max="99" inputmode="numeric" value="${esc(state.homePred)}" ${started(tbg) ? "disabled" : ""}></label><span class="tot" id="tot"></span></div></div>
     <div class="actions"><button class="btn" id="submit">${mine ? "Update picks" : "Submit picks"}</button><span class="count" id="count"></span></div></div>`;
-  addAccountPanel();
   const upd = () => { const openG = games.filter(g => !started(g)); const n = openG.filter(g => state.picks[g.id]).length; $("#count").textContent = `${n} of ${openG.length} open games picked`; const a = $("#ap").value, h = $("#hp").value; $("#tot").textContent = a !== "" && h !== "" ? `Total ${Number(a) + Number(h)}` : ""; };
   upd();
   view.querySelectorAll(".team:not(:disabled)").forEach(b => b.addEventListener("click", () => { state.picks[b.dataset.g] = b.dataset.t; view.querySelectorAll(`.team[data-g="${CSS.escape(b.dataset.g)}"]`).forEach(x => { const on = x.dataset.t === b.dataset.t; x.classList.toggle("picked", on); x.setAttribute("aria-pressed", on); }); upd(); }));
@@ -306,9 +311,24 @@ async function renderPicks(seq = renderSeq) {
   });
 }
 
+/* ---------- account ---------- */
+function renderAccount() {
+  msg(""); if (!state.user) { state.tab = "picks"; return render(); }
+  view.innerHTML = `<div class="ticket authbox"><h2>Your account</h2><p class="muted" style="margin:0">${esc(state.user.email)}</p>
+    <h3>Profile name</h3><p class="muted small" style="margin:0">This is what shows on the leaderboard and in the weekly email.</p>
+    <div class="row"><label class="f">Profile name<input type="text" id="ac_name" maxlength="30" value="${esc(state.user.name)}"></label><button class="btn sm" id="ac_saveName" style="align-self:flex-end">Save name</button></div>
+    <h3>Password</h3>
+    <div class="row"><label class="f">Current password<input type="password" id="ac_cur" autocomplete="current-password"></label></div>
+    <div class="row"><label class="f">New password<input type="password" id="ac_new" autocomplete="new-password"></label><label class="f">Repeat new password<input type="password" id="ac_new2" autocomplete="new-password"></label></div>
+    <div class="actions"><button class="btn sm" id="ac_savePw">Change password</button><button class="btn ghost sm" id="ac_back">Back to picks</button></div></div>`;
+  $("#ac_back").addEventListener("click", () => { state.tab = "picks"; render(); });
+  $("#ac_saveName").addEventListener("click", async e => { e.target.disabled = true; try { const r = await api(null, { action: "updateProfile", token: state.user.token, name: $("#ac_name").value }); state.user.name = r.name; store.set("pickem_user", state.user); renderWho(); msg(`Profile name saved as ${esc(r.name)}.`, "ok"); } catch (err) { msg(esc(err.message), "err"); } e.target.disabled = false; });
+  $("#ac_savePw").addEventListener("click", async e => { if ($("#ac_new").value !== $("#ac_new2").value) return msg("The new passwords don't match.", "err"); e.target.disabled = true; try { await api(null, { action: "updateProfile", token: state.user.token, currentPassword: $("#ac_cur").value, newPassword: $("#ac_new").value }); ["ac_cur", "ac_new", "ac_new2"].forEach(id => $("#" + id).value = ""); msg("Password changed.", "ok"); } catch (err) { msg(esc(err.message), "err"); } e.target.disabled = false; });
+}
+
 /* ---------- results ---------- */
 async function renderResults(seq = renderSeq, fresh = false) {
-  loading(); msg(""); try { await loadWeek(fresh); } catch (e) { if (stale(seq)) return; return view.innerHTML = `<div class="notice err">Couldn't load results (${esc(e.message)}).</div>`; }
+  loading(); msg(""); try { await loadWeek(fresh, seq); } catch (e) { if (stale(seq)) return; return view.innerHTML = `<div class="notice err">Couldn't load results (${esc(e.message)}).</div>`; }
   if (stale(seq)) return;
   const games = state.data.games || [], wk = state.data.week, done = games.filter(g => g.result).length, tbg = tiebreakGame(games);
   if (!games.length) return view.innerHTML = `<div class="ticket"><h2>Week ${state.week}</h2><p class="muted">No games posted for this week.</p></div>`;
@@ -323,7 +343,7 @@ async function renderResults(seq = renderSeq, fresh = false) {
 
 /* ---------- standings ---------- */
 async function renderStandings(seq = renderSeq) {
-  loading(); msg(""); let s; try { s = (await api({ action: "standings" })).standings; } catch (e) { if (stale(seq)) return; return view.innerHTML = `<div class="notice err">Couldn't load standings (${esc(e.message)}).</div>`; }
+  loading(); msg(""); let s; try { s = (await api({ action: "standings" }, null, { onFresh: () => { if (!stale(seq)) render(); } })).standings; } catch (e) { if (stale(seq)) return; return view.innerHTML = `<div class="notice err">Couldn't load standings (${esc(e.message)}).</div>`; }
   if (stale(seq)) return;
   const weeks = s.weeks.map(w => w.week);
   const podium = ["1st", "2nd", "3rd"].map((lab, i) => { const h = s.rows.filter(r => r.rank === i + 1); const who = h.length === 1 ? h[0].name : h.length > 1 ? `Tie: ${h.map(x => x.name).join(", ")}` : "—"; return `<div class="prize ${i === 0 ? "p1" : ""}"><div class="a">$${s.prizes[i].toLocaleString()}</div><div class="n">${lab} · ${esc(who)}</div></div>`; }).join("");
@@ -345,7 +365,7 @@ async function renderAdmin(seq = renderSeq) {
     <div class="ticket"><h2>Commissioner</h2><div class="row"><label class="f" style="max-width:240px">PIN<input type="password" id="pin" value="${esc(state.pin)}" autocomplete="off"></label><span class="muted small">Starts as 4321 — change it in Pool settings.</span></div></div>
 
     <div class="ticket"><h2>1 · Build the Week ${state.week} slate</h2><p class="muted" style="margin:0">Loads every NFL game plus every game involving an AP Top 25 college team for this week, with the current spread and logos. Tick the games you want in the pool, then publish. The spread is frozen at publish time. The latest kickoff becomes the Monday night tiebreaker game.</p>
-      <div class="actions"><button class="btn ghost" id="loadSlate">Load games from ESPN</button><label class="chk"><input type="checkbox" id="hideThu" ${state.hideThu ? "checked" : ""}> Hide Thursday games</label><span class="muted small">${published.length ? `${published.length} games currently published` : "Nothing published yet for this week"}</span></div>
+      <div class="actions"><button class="btn ghost" id="loadSlate">Load games from ESPN</button><label class="chk"><input type="checkbox" id="hideThu" ${state.hideThu ? "checked" : ""}> Hide Thursday games</label><label class="chk"><input type="checkbox" id="showUnranked" ${state.showUnranked ? "checked" : ""}> Show unranked college games too</label><span class="muted small">${published.length ? `${published.length} games currently published` : "Nothing published yet for this week"}</span></div>
       <div id="slateBox"></div></div>
 
     <div class="ticket"><h2>2 · Score Week ${state.week}</h2><p class="muted" style="margin:0">After the games, click auto-score to pull final scores from ESPN and work out who covered; fix anything by hand, enter the Monday night total if it didn't fill, then save.</p>
@@ -353,10 +373,8 @@ async function renderAdmin(seq = renderSeq) {
       <div class="tie"><label class="f" style="max-width:320px">Monday night actual combined score<input type="number" id="mnf" min="0" max="150" value="${state.data.mnfActual ?? ""}"></label></div>
       <div class="actions"><button class="btn" id="saveRes">Save results</button><button class="btn ghost" id="previewEmail">Preview email</button><button class="btn ghost" id="sendEmail">Email weekly results</button><span class="muted">${state.data.emailedAt ? "Emailed " + esc(new Date(state.data.emailedAt).toLocaleString()) : "Not emailed yet"}</span></div><div id="emailPreview"></div></div>
 
-    <div class="ticket"><h2>3 · Players</h2><p class="muted" style="margin:0">Look someone up by email to see whether they have a login, rename their profile, reset a password, or enter the Week ${state.week} picks they sent you outside the app. Or load everyone at once.</p>
-      <div class="row"><label class="f" style="max-width:380px">Look up by email<input type="email" id="findEmail" placeholder="name@company.com" autocomplete="off"></label><button class="btn sm" id="findBtn">Look up</button></div><div id="findBox"></div>
-      <div class="actions"><button class="btn sm ghost" id="loadPlayers">Load all players</button></div><div id="playersBox"></div>
-      <div id="proxyBox"></div></div>
+    <div class="ticket"><h2>3 · Players</h2><p class="muted" style="margin:0">Everyone who has created a login. Mark entry fees paid, reset a forgotten password, or remove someone.</p>
+      <div class="actions"><button class="btn sm" id="loadPlayers">Load players</button></div><div id="playersBox"></div></div>
 
     <div class="ticket"><h2>4 · Pool settings</h2>
       <div class="row"><label class="f">Pool name<input id="s_poolName" value="${esc(st.poolName || "")}"></label><label class="f">Entry fee ($)<input id="s_entryFee" type="number" value="${esc(st.entryFee || "")}"></label><label class="f">2nd prize ($)<input id="s_prize2" type="number" value="${esc(st.prize2 || "")}"></label><label class="f">3rd prize ($)<input id="s_prize3" type="number" value="${esc(st.prize3 || "")}"></label><label class="f">Weekly winner bonus (points)<input id="s_weeklyBonus" type="number" min="0" value="${esc(st.weeklyBonus ?? "1")}"></label></div>
@@ -368,7 +386,7 @@ async function renderAdmin(seq = renderSeq) {
   // --- slate builder
   const drawSlate = () => {
     const box = $("#slateBox"); if (!state.slate) { box.innerHTML = ""; return; }
-    const pubIds = new Set(published.map(g => g.id)); const list = state.slate.filter(g => !(state.hideThu && new Date(g.kickoff).getDay() === 4));
+    const pubIds = new Set(published.map(g => g.id)); const list = state.slate.filter(g => !(state.hideThu && new Date(g.kickoff).getDay() === 4) && (g.league !== "NCAA" || g.ranked || state.showUnranked));
     if (!list.length) { box.innerHTML = `<p class="muted">No games found for this week yet.</p>`; return; }
     box.innerHTML = `<ul class="slate">${list.map(g => `<li class="${g.sel ? "" : "off"}"><input type="checkbox" data-id="${esc(g.id)}" ${g.sel ? "checked" : ""}><div class="m"><span class="lg muted small">${esc(g.league)}</span>${tImg(g.teams.away)}<span class="tm">${g.teams.away.rank ? `<sup>#${g.teams.away.rank}</sup>` : ""}${esc(g.teams.away.name)}</span><span class="muted">@</span>${tImg(g.teams.home)}<span class="tm">${g.teams.home.rank ? `<sup>#${g.teams.home.rank}</sup>` : ""}${esc(g.teams.home.name)}</span><span class="muted small">${esc(g.spread || "no line yet")}</span>${pubIds.has(g.id) ? `<span class="muted small">(published)</span>` : ""}<span class="k">${esc(fmtKick(g.kickoff))}${g.tv ? " · " + esc(g.tv) : ""}</span></div></li>`).join("")}</ul>
       <div class="actions"><button class="btn sm ghost" id="selAll">Select all shown</button><button class="btn sm ghost" id="selNone">Clear</button><span class="count" id="selCount"></span><button class="btn" id="publish">Publish slate</button></div>`;
@@ -377,10 +395,14 @@ async function renderAdmin(seq = renderSeq) {
     $("#selAll").addEventListener("click", () => { list.forEach(g => g.sel = true); drawSlate(); }); $("#selNone").addEventListener("click", () => { state.slate.forEach(g => g.sel = false); drawSlate(); });
     $("#publish").addEventListener("click", e => { const sel = state.slate.filter(g => g.sel); if (!sel.length) return msg("Select at least one game.", "err"); if (sel.some(g => g.homeLine == null) && !confirm("Some selected games have no spread yet. Publish anyway? (Players would be picking straight up on those.)")) return;
       const removed = published.filter(g => !sel.some(s => s.id === g.id)).length; if (removed && !confirm(`This removes ${removed} already-published game${removed > 1 ? "s" : ""} from Week ${state.week}. Continue?`)) return;
-      run(e.target, { action: "publishSlate", week: state.week, games: sel.map(({ sel, final, statusText, ...g }) => g) }, () => `Week ${state.week} slate published (${sel.length} games).`, () => { state.slate = null; renderAdmin(++renderSeq); }); });
+      run(e.target, { action: "publishSlate", week: state.week, games: sel.map(({ sel, final, statusText, ranked, ...g }) => g) }, () => `Week ${state.week} slate published (${sel.length} games).`, () => { state.slate = null; renderAdmin(++renderSeq); }); });
   };
-  $("#loadSlate").addEventListener("click", async e => { e.target.disabled = true; msg(""); try { const evs = await fetchWeekEvents(state.week); const pubIds = new Set(published.map(g => g.id)); state.slate = evs.map(g => ({ ...g, sel: pubIds.has(g.id) })); if (!evs.length) msg("ESPN returned no games for this week — is the week number right?", "err"); } catch (err) { msg(`Couldn't load from ESPN: ${esc(err.message)}`, "err"); } e.target.disabled = false; drawSlate(); });
+  $("#loadSlate").addEventListener("click", async e => { e.target.disabled = true; msg(""); try { const evs = await fetchWeekEvents(state.week); const pubIds = new Set(published.map(g => g.id)); state.slate = evs.map(g => ({ ...g, sel: pubIds.has(g.id) })); const i = evs.info || {};
+      if (!evs.length) msg("ESPN returned no games for this week — is the week number right?", "err");
+      else msg(`Loaded ${i.nfl} NFL game${i.nfl === 1 ? "" : "s"} and ${i.cfb} college game${i.cfb === 1 ? "" : "s"} (${i.ranked} with a Top-25 team).${i.errors && i.errors.length ? ` Some college days failed to load: ${esc(i.errors.join("; "))}` : ""}${i.cfb === 0 && !(i.errors && i.errors.length) ? " ESPN listed no college games in this window — if that seems wrong, try again in a minute." : ""}`, i.errors && i.errors.length ? "err" : "ok"); }
+    catch (err) { msg(`Couldn't load from ESPN: ${esc(err.message)}`, "err"); } e.target.disabled = false; drawSlate(); });
   $("#hideThu").addEventListener("change", e => { state.hideThu = e.target.checked; drawSlate(); });
+  $("#showUnranked").addEventListener("change", e => { state.showUnranked = e.target.checked; drawSlate(); });
   drawSlate();
 
   // --- results
@@ -393,66 +415,18 @@ async function renderAdmin(seq = renderSeq) {
   $("#previewEmail").addEventListener("click", e => run(e.target, { action: "previewEmail", week: state.week }, () => "Preview below.", r => { $("#emailPreview").innerHTML = `<div class="notice" style="background:#fff">${r.html}</div>`; }));
 
   // --- players
-  const reload = async () => { if ($("#playersBox").innerHTML) drawPlayers((await api({ action: "players", pin: state.pin })).players); };
-  const drawPlayers = list => { $("#playersBox").innerHTML = `<div class="scroll"><table><thead><tr><th>Profile name</th><th>Email</th><th>Paid</th><th></th></tr></thead><tbody>${list.map(p => `<tr><td>${esc(p.name)}</td><td>${esc(p.email)}</td><td><label class="chk"><input type="checkbox" data-paid="${esc(p.email)}" ${p.paid ? "checked" : ""}> ${p.paid ? "Yes" : "No"}</label></td><td style="text-align:right;white-space:nowrap"><button class="btn sm ghost" data-picks="${esc(p.email)}">Enter picks</button> <button class="btn sm ghost" data-rename="${esc(p.email)}" data-name="${esc(p.name)}">Rename</button> <button class="btn sm ghost" data-reset="${esc(p.email)}">Reset password</button> <button class="btn sm ghost danger" data-remove="${esc(p.email)}">Remove</button></td></tr>`).join("")}</tbody></table></div><p class="muted small">${list.length} registered · ${list.filter(p => p.paid).length} paid · pool $${(list.length * Number(st.entryFee || 0)).toLocaleString()}</p>`;
-    view.querySelectorAll("#playersBox [data-paid]").forEach(c => c.addEventListener("change", e => run(e.target, { action: "setPaid", email: c.dataset.paid, paid: c.checked }, () => "Saved.", reload)));
-    bindPlayerButtons($("#playersBox")); };
-  const bindPlayerButtons = box => {
-    box.querySelectorAll("[data-reset]").forEach(b => b.addEventListener("click", e => { const pw = prompt(`New temporary password for ${b.dataset.reset}:`, "1234"); if (pw) run(e.target, { action: "resetPassword", email: b.dataset.reset, password: pw }, () => `Password reset. Tell them to log in with "${esc(pw)}" — they can change it under Account on the Picks tab.`); }));
-    box.querySelectorAll("[data-rename]").forEach(b => b.addEventListener("click", e => { const name = prompt(`New profile name for ${b.dataset.rename}:`, b.dataset.name || ""); if (name && name.trim()) run(e.target, { action: "renamePlayer", email: b.dataset.rename, name: name.trim() }, r => `Renamed to "${esc(r.name)}".`, async () => { await reload(); if ($("#findBox").innerHTML) findPlayer(b.dataset.rename); }); }));
-    box.querySelectorAll("[data-remove]").forEach(b => b.addEventListener("click", e => { if (confirm(`Remove ${b.dataset.remove}? Their past picks stay in the sheet.`)) run(e.target, { action: "removePlayer", email: b.dataset.remove }, () => "Removed.", async () => { await reload(); $("#findBox").innerHTML = ""; $("#proxyBox").innerHTML = ""; }); }));
-    box.querySelectorAll("[data-picks]").forEach(b => b.addEventListener("click", async () => { const p = pin(); if (!p) return; try { const r = await api(null, { pin: p, action: "findPlayer", email: b.dataset.picks, week: state.week }); if (!r.found) return msg("No account for that email.", "err"); drawProxy(r.player, r.mine); } catch (err) { msg(esc(err.message), "err"); } })); };
-  const findPlayer = async email => {
-    const p = pin(); if (!p) return; email = String(email || "").trim(); if (!email) return msg("Enter an email address.", "err");
-    $("#findBtn").disabled = true; msg("");
-    try { const r = await api(null, { pin: p, action: "findPlayer", email, week: state.week });
-      if (!r.found) { $("#findBox").innerHTML = `<div class="notice err"><div class="pcard"><span><b>No account for ${esc(r.email)}.</b> They haven't created a login yet.</span><button class="btn sm" id="createBtn">Create their account</button></div></div>`;
-        $("#createBtn").addEventListener("click", e => { const name = prompt(`Profile name for ${r.email} (what shows on the leaderboard):`); if (!name || !name.trim()) return; const pw = prompt("Temporary password for them:", "1234"); if (!pw) return; run(e.target, { action: "createPlayer", email: r.email, name: name.trim(), password: pw }, () => `Account created for ${esc(name.trim())}. They log in with "${esc(pw)}" and can change it under Account.`, async () => { await reload(); findPlayer(r.email); }); }); }
-      else { const pl = r.player; $("#findBox").innerHTML = `<div class="notice ok"><div class="pcard"><span><b>${esc(pl.name)}</b> · ${esc(pl.email)} · ${pl.paid ? "paid" : "not paid"} · ${r.weeks.length ? `picks in for week${r.weeks.length > 1 ? "s" : ""} ${r.weeks.join(", ")}` : "no picks submitted yet"}${r.mine ? ` · Week ${state.week} last saved ${esc(new Date(r.mine.ts).toLocaleString())}` : ` · <b>nothing saved for Week ${state.week}</b>`}</span><span style="white-space:nowrap"><button class="btn sm" data-picks="${esc(pl.email)}">Enter Week ${state.week} picks</button> <button class="btn sm ghost" data-rename="${esc(pl.email)}" data-name="${esc(pl.name)}">Rename</button> <button class="btn sm ghost" data-reset="${esc(pl.email)}">Reset password</button></span></div></div>`;
-        bindPlayerButtons($("#findBox")); }
-    } catch (err) { msg(esc(err.message), "err"); }
-    $("#findBtn").disabled = false;
-  };
-  $("#findBtn").addEventListener("click", () => findPlayer($("#findEmail").value)); $("#findEmail").addEventListener("keydown", e => e.key === "Enter" && findPlayer(e.target.value));
+  const drawPlayers = list => { $("#playersBox").innerHTML = `<div class="scroll"><table><thead><tr><th>Profile name</th><th>Email</th><th>Paid</th><th></th></tr></thead><tbody>${list.map(p => `<tr><td>${esc(p.name)}</td><td>${esc(p.email)}</td><td><label class="chk"><input type="checkbox" data-paid="${esc(p.email)}" ${p.paid ? "checked" : ""}> ${p.paid ? "Yes" : "No"}</label></td><td style="text-align:right"><button class="btn sm ghost" data-reset="${esc(p.email)}">Reset password</button> <button class="btn sm ghost danger" data-remove="${esc(p.email)}">Remove</button></td></tr>`).join("")}</tbody></table></div><p class="muted small">${list.length} registered · ${list.filter(p => p.paid).length} paid · pool $${(list.length * Number(st.entryFee || 0)).toLocaleString()}</p>`;
+    const reload = async () => drawPlayers((await api({ action: "players", pin: state.pin })).players);
+    view.querySelectorAll("[data-paid]").forEach(c => c.addEventListener("change", e => run(e.target, { action: "setPaid", email: c.dataset.paid, paid: c.checked }, () => "Saved.", reload)));
+    view.querySelectorAll("[data-reset]").forEach(b => b.addEventListener("click", e => { const pw = prompt(`New temporary password for ${b.dataset.reset}:`, "1234"); if (pw) run(e.target, { action: "resetPassword", email: b.dataset.reset, password: pw }, () => `Password reset. Tell them to log in with "${esc(pw)}".`); }));
+    view.querySelectorAll("[data-remove]").forEach(b => b.addEventListener("click", e => { if (confirm(`Remove ${b.dataset.remove}? Their past picks stay in the sheet.`)) run(e.target, { action: "removePlayer", email: b.dataset.remove }, () => "Removed.", reload); })); };
   $("#loadPlayers").addEventListener("click", async e => { const p = pin(); if (!p) return; e.target.disabled = true; try { drawPlayers((await api({ action: "players", pin: p })).players); } catch (err) { msg(esc(err.message), "err"); } e.target.disabled = false; });
-
-  // --- enter picks on a player's behalf (bypasses the weekly lock; matches pasted team names to the slate)
-  const ALIAS = { jags: "jaguars", bama: "alabama", "a&m": "texas a&m", tamu: "texas a&m", aggies: "texas a&m", osu: "ohio state", buckeyes: "ohio state", niners: "49ers", "49ers": "49ers", pats: "patriots", bucs: "buccaneers", skins: "commanders", philly: "eagles", fins: "dolphins", sooners: "oklahoma", horns: "texas", longhorns: "texas", cats: "kentucky", wildcats: "kentucky", cougars: "byu", sun_devils: "arizona state", asu: "arizona state", "ohio st": "ohio state", "ohio st.": "ohio state", "arizona st": "arizona state", "arizona st.": "arizona state", "penn st": "penn state", "michigan st": "michigan state", "oklahoma st": "oklahoma state", "oregon st": "oregon state", "iowa st": "iowa state", "kansas st": "kansas state", "florida st": "florida state", "miss st": "mississippi state", "ole miss": "ole miss", lsu: "lsu", nd: "notre dame", irish: "notre dame", "n.o.": "saints", nola: "saints", kc: "chiefs", gb: "packers", ne: "patriots", tb: "buccaneers", lv: "raiders", lac: "chargers", lar: "rams", sf: "49ers", bal: "ravens", chi: "bears", jax: "jaguars", det: "lions", den: "broncos", cle: "browns", car: "panthers", no: "saints" };
-  const norm = x => String(x).toLowerCase().replace(/[^a-z0-9&. ]+/g, " ").replace(/\s+/g, " ").trim();
-  const matchTeam = (raw, games) => {   // → {g, side} | null (null when unknown or ambiguous)
-    let t = norm(raw).replace(/\s[+-]?\d+(\.\d+)?$/, "").replace(/\s(pk|even)$/, "").trim(); if (!t) return null; t = ALIAS[t] || t;
-    const sides = []; games.forEach(g => ["away", "home"].forEach(side => { const tm = g.teams?.[side] || {}; sides.push({ g, side, abbr: norm(g[side]), name: norm(tm.name || ""), full: norm(tm.full || tm.name || "") }); }));
-    const tiers = [x => x.name === t || x.full === t || x.abbr === t, x => x.full.split(" ").slice(-1)[0] === t || x.full.split(" ").slice(-2).join(" ") === t, x => x.full.startsWith(t + " ") || x.name.startsWith(t + " "), x => x.full.includes(t)];
-    for (const f of tiers) { const hits = sides.filter(f); if (hits.length === 1) return hits[0]; if (hits.length > 1) return null; }
-    return null;
-  };
-  const drawProxy = (pl, mine) => {
-    const games = published; if (!games.length) return msg("Publish the slate first.", "err");
-    const proxy = { picks: { ...(mine?.picks || {}) }, ap: mine?.awayPred ?? "", hp: mine?.homePred ?? "" };
-    $("#proxyBox").innerHTML = `<div class="notice" style="margin-top:16px"><h3 style="margin:0 0 4px">Week ${state.week} picks for ${esc(pl.name)}</h3><p class="muted small" style="margin:0">Entered by the commissioner — saves even after the weekly lock and after kickoff. ${mine ? `Pre-filled with what they last saved (${esc(new Date(mine.ts).toLocaleString())}).` : "Nothing saved for them yet this week."}</p>
-      <div class="row"><label class="f">Paste the teams they sent (commas or one per line — spreads are ignored)<textarea id="pasteBox" rows="3" placeholder="Oklahoma +5.5, Arizona State, Saints, Ravens…"></textarea></label></div><div class="actions"><button class="btn sm ghost" id="matchBtn">Match to slate</button><span class="muted small" id="matchNote"></span></div>
-      <ul class="games" id="proxyGames">${games.map(g => gameRow(g, { pick: proxy.picks[g.id], interactive: true, force: true, isTb: g.id === tbg?.id })).join("")}</ul>
-      <div class="tie"><b>Monday night prediction</b> — ${esc(tbg.teams.away.name)} @ ${esc(tbg.teams.home.name)}<div class="pred"><label>${esc(tbg.teams.away.name)}<input type="number" id="pap" min="0" max="99" inputmode="numeric" value="${esc(proxy.ap)}"></label><label>${esc(tbg.teams.home.name)}<input type="number" id="php" min="0" max="99" inputmode="numeric" value="${esc(proxy.hp)}"></label><span class="tot" id="ptot"></span></div></div>
-      <div class="actions"><button class="btn" id="proxySave">Save picks for ${esc(pl.name)}</button><span class="count" id="pcount"></span><button class="btn sm ghost" id="proxyClose">Close</button></div></div>`;
-    const box = $("#proxyBox");
-    const paint = () => { box.querySelectorAll(".team").forEach(x => { const on = proxy.picks[x.dataset.g] === x.dataset.t; x.classList.toggle("picked", on); x.setAttribute("aria-pressed", on); }); const n = Object.keys(proxy.picks).length; $("#pcount").textContent = `${n} of ${games.length} games picked`; const a = $("#pap").value, h = $("#php").value; $("#ptot").textContent = a !== "" && h !== "" ? `Total ${Number(a) + Number(h)}` : ""; };
-    box.querySelectorAll(".team").forEach(b => b.addEventListener("click", () => { proxy.picks[b.dataset.g] = b.dataset.t; paint(); }));
-    $("#pap").addEventListener("input", paint); $("#php").addEventListener("input", paint); paint();
-    $("#matchBtn").addEventListener("click", () => {
-      const raw = $("#pasteBox").value.split(/[\n,;]+/).map(x => x.trim()).filter(Boolean); if (!raw.length) return;
-      const bad = []; let n = 0; raw.forEach(r => { const m = matchTeam(r, games); if (m) { proxy.picks[m.g.id] = m.g[m.side]; n++; } else bad.push(r); }); paint();
-      $("#matchNote").innerHTML = `${n} matched.` + (bad.length ? ` <span class="unmatched">Couldn't place: ${esc(bad.join(", "))}</span> — tap those below.` : "");
-    });
-    $("#proxyClose").addEventListener("click", () => box.innerHTML = "");
-    $("#proxySave").addEventListener("click", e => { if (!Object.keys(proxy.picks).length) return msg("Pick at least one game.", "err");
-      run(e.target, { action: "adminSubmitPicks", email: pl.email, week: state.week, picks: proxy.picks, awayPred: $("#pap").value, homePred: $("#php").value }, r => `${r.updated ? "Updated" : "Saved"} ${r.accepted} pick${r.accepted === 1 ? "" : "s"} for ${esc(r.name)}${r.total !== "" ? ` (tiebreaker total ${r.total})` : ""}.`, () => { box.innerHTML = ""; cache[stateKey(state.week)] = null; if ($("#findBox").innerHTML) findPlayer(pl.email); }); });
-  };
   $("#saveSettings").addEventListener("click", e => { const settings = {}; ["poolName", "entryFee", "prize2", "prize3", "weeklyBonus", "lockDay", "lockTime", "commissionerEmail", "appUrl", "pin"].forEach(k => { const v = $("#s_" + k).value; if (v !== "") settings[k] = v; }); run(e.target, { action: "saveSettings", settings }, () => "Settings saved.", () => { if (settings.pin) state.pin = settings.pin; }); });
 }
 
 /* ---------- boot ---------- */
 let renderSeq = 0; const stale = seq => seq !== renderSeq;   // ignore responses for a tab the user already left
-function render() { renderChrome(); const seq = ++renderSeq; ({ picks: renderPicks, results: renderResults, standings: renderStandings, admin: renderAdmin })[state.tab](seq); }
+function render() { renderChrome(); const seq = ++renderSeq; ({ picks: renderPicks, results: renderResults, standings: renderStandings, admin: renderAdmin, account: renderAccount })[state.tab](seq); }
 document.querySelectorAll("nav.tabs button").forEach(b => b.addEventListener("click", () => { state.tab = b.dataset.tab; state.slate = null; render(); }));
 $("#weekSel").addEventListener("change", e => { state.week = Number(e.target.value); state.picks = {}; state.editing = false; state.awayPred = state.homePred = ""; state.slate = null; render(); });
 $("#prevWk").addEventListener("click", () => { if (state.week > 1) { state.week--; state.picks = {}; state.editing = false; state.awayPred = state.homePred = ""; state.slate = null; render(); } });
