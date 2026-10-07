@@ -163,7 +163,11 @@ const cache = {};   // GET responses, keyed by query, kept for 30s so tab clicks
 const CACHE_MS = 60000;
 async function api(params, body, opts = {}) {
   if (!API_URL) throw new Error("API_URL isn't set in index.html yet");
-  const ctrl = new AbortController(); const timer = setTimeout(() => ctrl.abort(), 20000);
+  try { return await apiOnce(params, body, opts); }
+  catch (e) { if (/didn't answer in time|Failed to fetch|NetworkError/i.test(e.message) && !opts.retried) return apiOnce(params, body, { ...opts, retried: true }); throw e; }
+}
+async function apiOnce(params, body, opts = {}) {
+  const ctrl = new AbortController(); const timer = setTimeout(() => ctrl.abort(), 45000);
   try {
     let r, key;
     if (body) { Object.keys(cache).forEach(k => delete cache[k]); r = await fetch(API_URL, { method: "POST", redirect: "follow", body: JSON.stringify({ season: state.season, ...body }), signal: ctrl.signal }); }
@@ -264,7 +268,7 @@ function renderChrome() {
   $("#seasonLabel").textContent = `${state.season} season`; if (state.data?.settings?.poolName) $("#poolName").firstChild.textContent = state.data.settings.poolName; renderWho();
 }
 function gameRow(g, o) {
-  const lock = started(g);
+  const lock = started(g) && !o.forceOpen;
   const btn = (side) => { const t = (g.teams && g.teams[side]) || { abbr: g[side], name: g[side] }, abbr = g[side]; const cls = ["team", side, o.pick === abbr ? "picked" : "", o.showResult && g.result ? (g.result === abbr ? "covered" : g.result === "PUSH" ? "" : "failed") : ""].join(" ");
     return `<button class="${cls}" data-g="${esc(g.id)}" data-t="${esc(abbr)}" ${o.interactive && !lock ? "" : "disabled"} aria-pressed="${o.pick === abbr}">${tImg(t)}<span><span class="tn">${t.rank ? `<sup>#${t.rank}</sup>` : ""}${esc(t.name)}</span><span class="tl">${esc(lineText(g, side))}${t.record ? ` · ${esc(t.record)}` : ""}</span></span></button>`; };
   const meta = `<span class="lg">${esc(g.league)}</span><span class="at">@</span><span>${esc(fmtKick(g.kickoff))}</span>${g.tv ? `<span>${esc(g.tv)}</span>` : ""}`;
@@ -373,10 +377,14 @@ async function renderAdmin(seq = renderSeq) {
       <div class="tie"><label class="f" style="max-width:320px">Monday night actual combined score<input type="number" id="mnf" min="0" max="150" value="${state.data.mnfActual ?? ""}"></label></div>
       <div class="actions"><button class="btn" id="saveRes">Save results</button><button class="btn ghost" id="previewEmail">Preview email</button><button class="btn ghost" id="sendEmail">Email weekly results</button><span class="muted">${state.data.emailedAt ? "Emailed " + esc(new Date(state.data.emailedAt).toLocaleString()) : "Not emailed yet"}</span></div><div id="emailPreview"></div></div>
 
-    <div class="ticket"><h2>3 · Players</h2><p class="muted" style="margin:0">Everyone who has created a login. Mark entry fees paid, reset a forgotten password, or remove someone.</p>
+    <div class="ticket"><h2>3 · Enter picks for a player</h2><p class="muted" style="margin:0">For someone who missed the Saturday lock or sent picks to you directly. This ignores the lock and kickoff times, so only use it for picks you received before the games started. Saved picks are tagged "commissioner" in the sheet.</p>
+      <div class="row"><label class="f" style="max-width:320px">Player<select id="mp_player"><option value="">Load players first…</option></select></label><button class="btn sm ghost" id="mp_load" style="align-self:flex-end">Load players</button></div>
+      <div id="mp_box"></div></div>
+
+    <div class="ticket"><h2>4 · Players</h2><p class="muted" style="margin:0">Everyone who has created a login. Mark entry fees paid, reset a forgotten password, or remove someone.</p>
       <div class="actions"><button class="btn sm" id="loadPlayers">Load players</button></div><div id="playersBox"></div></div>
 
-    <div class="ticket"><h2>4 · Pool settings</h2>
+    <div class="ticket"><h2>5 · Pool settings</h2>
       <div class="row"><label class="f">Pool name<input id="s_poolName" value="${esc(st.poolName || "")}"></label><label class="f">Entry fee ($)<input id="s_entryFee" type="number" value="${esc(st.entryFee || "")}"></label><label class="f">2nd prize ($)<input id="s_prize2" type="number" value="${esc(st.prize2 || "")}"></label><label class="f">3rd prize ($)<input id="s_prize3" type="number" value="${esc(st.prize3 || "")}"></label><label class="f">Weekly winner bonus (points)<input id="s_weeklyBonus" type="number" min="0" value="${esc(st.weeklyBonus ?? "1")}"></label></div>
       <div class="row"><label class="f">Picks lock on (day)<select id="s_lockDay">${["Thu","Fri","Sat","Sun"].map(d => `<option ${(st.lockDay || "Sat") === d ? "selected" : ""}>${d}</option>`).join("")}</select></label><label class="f">Picks lock at (Eastern time)<input id="s_lockTime" type="time" value="${esc(st.lockTime || "11:30")}"></label><span class="muted small" style="flex:2 1 260px">Everyone can edit their picks until this moment in the slate's week. Games that kick off earlier still lock individually.</span></div>
       <div class="row"><label class="f">Commissioner email (results go To: you, players Bcc'd)<input id="s_commissionerEmail" value="${esc(st.commissionerEmail || "")}"></label><label class="f">Link to this page (added to emails)<input id="s_appUrl" value="${esc(st.appUrl || location.href.split("?")[0])}"></label><label class="f">New PIN (blank = keep)<input id="s_pin" type="password" autocomplete="off"></label></div>
@@ -413,6 +421,25 @@ async function renderAdmin(seq = renderSeq) {
   $("#saveRes").addEventListener("click", e => run(e.target, { action: "saveResults", week: state.week, results, mnfActual: $("#mnf").value === "" ? null : Number($("#mnf").value) }, () => `Week ${state.week} results saved.`));
   $("#sendEmail").addEventListener("click", e => { if (!confirm(`Email Week ${state.week} results to all players now?`)) return; run(e.target, { action: "sendEmail", week: state.week, force: !!state.data.emailedAt && confirm("Already emailed once. Send again?") }, r => r.sent ? `Sent to ${r.recipients} recipients.` : esc(r.reason)); });
   $("#previewEmail").addEventListener("click", e => run(e.target, { action: "previewEmail", week: state.week }, () => "Preview below.", r => { $("#emailPreview").innerHTML = `<div class="notice" style="background:#fff">${r.html}</div>`; }));
+
+  // --- enter picks for a player
+  const mp = { players: [], picks: {}, ap: "", hp: "" };
+  const drawManual = () => {
+    const box = $("#mp_box"); const email = $("#mp_player").value; if (!email || !published.length) { box.innerHTML = published.length ? "" : `<p class="muted">Publish a slate for this week first.</p>`; return; }
+    const tbgm = tiebreakGame(published);
+    box.innerHTML = `<ul class="games">${published.map(g => gameRow(g, { pick: mp.picks[g.id], interactive: true, forceOpen: true, isTb: g.id === tbgm.id })).join("")}</ul>
+      <div class="tie"><b>Monday night prediction</b> — ${esc(tbgm.teams.away.name)} @ ${esc(tbgm.teams.home.name)}<div class="pred"><label>${esc(tbgm.teams.away.name)}<input type="number" id="mp_ap" min="0" max="99" value="${esc(mp.ap)}"></label><label>${esc(tbgm.teams.home.name)}<input type="number" id="mp_hp" min="0" max="99" value="${esc(mp.hp)}"></label></div></div>
+      <div class="actions"><button class="btn" id="mp_save">Save picks for this player</button><span class="count" id="mp_count"></span></div>`;
+    const cnt = () => $("#mp_count").textContent = `${Object.keys(mp.picks).filter(id => published.some(g => g.id === id)).length} of ${published.length} games picked`; cnt();
+    box.querySelectorAll(".team:not(:disabled)").forEach(b => b.addEventListener("click", () => { mp.picks[b.dataset.g] = b.dataset.t; box.querySelectorAll(`.team[data-g="${CSS.escape(b.dataset.g)}"]`).forEach(x => { const on = x.dataset.t === b.dataset.t; x.classList.toggle("picked", on); x.setAttribute("aria-pressed", on); }); cnt(); }));
+    $("#mp_ap").addEventListener("input", e => mp.ap = e.target.value); $("#mp_hp").addEventListener("input", e => mp.hp = e.target.value);
+    $("#mp_save").addEventListener("click", e => { const picks = {}; published.forEach(g => { if (mp.picks[g.id]) picks[g.id] = mp.picks[g.id]; }); if (!Object.keys(picks).length) return msg("Pick at least one game.", "err");
+      const who = mp.players.find(x => x.email === email)?.name || email; if (!confirm(`Save Week ${state.week} picks for ${who}? This replaces anything they submitted themselves.`)) return;
+      run(e.target, { action: "adminSubmitPicks", week: state.week, email, picks, awayPred: mp.ap, homePred: mp.hp }, r => `Saved ${r.accepted} picks for ${esc(r.name)} (Week ${state.week}).`, () => renderAdmin(++renderSeq)); });
+  };
+  $("#mp_load").addEventListener("click", async e => { const p = pin(); if (!p) return; e.target.disabled = true; try { mp.players = (await api({ action: "players", pin: p })).players.sort((a, b) => a.name.localeCompare(b.name)); $("#mp_player").innerHTML = `<option value="">Choose a player…</option>` + mp.players.map(x => `<option value="${esc(x.email)}">${esc(x.name)}</option>`).join(""); } catch (err) { msg(esc(err.message), "err"); } e.target.disabled = false; });
+  $("#mp_player").addEventListener("change", async e => { mp.picks = {}; mp.ap = mp.hp = ""; const email = e.target.value; if (email) { try { const r = await api({ action: "playerPicks", pin: state.pin, week: state.week, email }, null, { fresh: true }); if (r.submission) { Object.assign(mp.picks, r.submission.picks || {}); mp.ap = r.submission.awayPred ?? ""; mp.hp = r.submission.homePred ?? ""; msg(`${esc(mp.players.find(x => x.email === email)?.name || email)} already has Week ${state.week} picks on file (submitted ${esc(new Date(r.submission.ts).toLocaleString())}${r.submission.enteredBy === "commissioner" ? ", by commissioner" : ""}). Editing them.`, ""); } else msg(""); } catch (err) { msg(esc(err.message), "err"); } } drawManual(); });
+  drawManual();
 
   // --- players
   const drawPlayers = list => { $("#playersBox").innerHTML = `<div class="scroll"><table><thead><tr><th>Profile name</th><th>Email</th><th>Paid</th><th></th></tr></thead><tbody>${list.map(p => `<tr><td>${esc(p.name)}</td><td>${esc(p.email)}</td><td><label class="chk"><input type="checkbox" data-paid="${esc(p.email)}" ${p.paid ? "checked" : ""}> ${p.paid ? "Yes" : "No"}</label></td><td style="text-align:right"><button class="btn sm ghost" data-reset="${esc(p.email)}">Reset password</button> <button class="btn sm ghost danger" data-remove="${esc(p.email)}">Remove</button></td></tr>`).join("")}</tbody></table></div><p class="muted small">${list.length} registered · ${list.filter(p => p.paid).length} paid · pool $${(list.length * Number(st.entryFee || 0)).toLocaleString()}</p>`;
